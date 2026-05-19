@@ -1722,6 +1722,8 @@ def callback_handler(call):
             "status": "Отстоял",
         })
 
+        _finish_qr_review(target_id)
+
         try:
             bot.send_message(
                 target_id,
@@ -1766,11 +1768,10 @@ def callback_handler(call):
         target_id   = e["user_id"]
         e["result"] = "not_stood"
 
+        _finish_qr_review(target_id)
+
         try:
             bot.send_message(
-                target_id,
-                f"╭─────────────────────\n"
-                f"├ ❌ <b>Не отстоял</b>\n"
                 f"├\n"
                 f"├ Ваш номер: <code>{esc(e['phone'])}</code> не отстоял\n"
                 f"├ Выплата не начислена.\n"
