@@ -965,6 +965,44 @@ def handle_text(message):
         )
         return
 
+    # ── Пользователь вводит 6-значный код (КОД-заявка) ──
+    if uid in pending_kod_input:
+        # Принимаем любой текст как код (обычно 6 цифр)
+        kod = text
+        pending_kod_input.discard(uid)
+
+        req = pending_kod_request.pop(uid, None)
+        phone = req["phone"] if req else "—"
+        name = esc(message.from_user.first_name or "—")
+        username = f"@{esc(message.from_user.username)}" if message.from_user.username else "—"
+
+        # Пересылаем код всем админам
+        admin_kod_text = (
+            f"╭─────────────────────\n"
+            f"├ 🔢 <b>Пользователь ввёл код</b>\n"
+            f"├\n"
+            f"├ Имя: {name}\n"
+            f"├ Username: {username}\n"
+            f"├ ID: <code>{uid}</code>\n"
+            f"├ Номер: <code>{esc(fmt_phone_display(phone))}</code>\n"
+            f"├\n"
+            f"├ Код: <b><code>{esc(kod)}</code></b>\n"
+            f"╰─────────────────────"
+        )
+        notify_all_admins(text=admin_kod_text, markup=admin_kod_result_btn(uid))
+
+        # Подтверждение пользователю
+        bot.send_message(
+            message.chat.id,
+            "╭─────────────────────\n"
+            "├ ✅ <b>Код отправлен!</b>\n"
+            "├\n"
+            "├ Ожидайте результата от администратора.\n"
+            "╰─────────────────────",
+            parse_mode="HTML",
+        )
+        return
+
     # ── Ввод суммы вывода ──
     if user_states.get(uid) == "waiting_withdraw_amount":
         del user_states[uid]
@@ -1285,7 +1323,23 @@ def callback_handler(call):
         if not phone:
             edit("❌ Ошибка: номер не найден. Попробуйте снова.", back_btn())
             return
-        user["_pending_format"] = "qr" if data == "fmt_qr" else "kod"
+        # Проверяем соответствие режима очереди
+        chosen = "qr" if data == "fmt_qr" else "kod"
+        current_mode = queue_mode["value"]
+        if chosen != current_mode:
+            mode_label = "📷 QR-код" if current_mode == "qr" else "🔢 КОД"
+            edit(
+                f"╭─────────────────────\n"
+                f"├ ⚠️ <b>Доступен только один формат</b>\n"
+                f"├\n"
+                f"├ Администратор принимает заявки\n"
+                f"├ только в формате: <b>{mode_label}</b>\n"
+                f"╰─────────────────────",
+                format_choice_menu(),
+            )
+            return
+
+        user["_pending_format"] = chosen
         user_states.pop(uid, None)
 
         if data == "fmt_qr":
@@ -1764,7 +1818,7 @@ def callback_handler(call):
             )
             bot.send_message(chat_id, "🟢 <b>Ворк включён</b>", parse_mode="HTML", reply_markup=admin_panel_menu())
 
-    # ── Список ворк-сессии ──
+    # ── Список ворк-сессии (только история) ──
     elif data == "adm_work_list":
         if not is_admin(uid):
             return
@@ -1772,7 +1826,6 @@ def callback_handler(call):
             chat_id,
             work_session_list_text(),
             parse_mode="HTML",
-            reply_markup=_build_work_list_markup(),
         )
 
     # ── Вывод ──
@@ -1854,6 +1907,137 @@ def callback_handler(call):
         except Exception:
             return
         _process_withdraw_reject(req_id, chat_id, msg_id)
+
+    # ── Очередь: показать выбор QR/КОД ──
+    elif data == "adm_queue_mode":
+        if not is_admin(uid):
+            return
+        mode_icon = "📷 QR-код" if queue_mode["value"] == "qr" else "🔢 КОД"
+        bot.send_message(
+            chat_id,
+            f"╭─────────────────────\n"
+            f"├ ⚙️ <b>Режим очереди</b>\n"
+            f"├\n"
+            f"├ Текущий режим: <b>{mode_icon}</b>\n"
+            f"├\n"
+            f"├ Выберите тип заявок, которые будут\n"
+            f"├ приходить администратору:\n"
+            f"╰─────────────────────",
+            parse_mode="HTML",
+            reply_markup=queue_mode_choice_btn(),
+        )
+
+    # ── Установить режим QR ──
+    elif data == "adm_set_mode_qr":
+        if not is_admin(uid):
+            return
+        queue_mode["value"] = "qr"
+        try:
+            bot.edit_message_text(
+                f"╭─────────────────────\n"
+                f"├ ⚙️ <b>Режим очереди изменён</b>\n"
+                f"├\n"
+                f"├ ✅ Теперь принимаются только <b>QR-код</b> заявки\n"
+                f"╰─────────────────────",
+                chat_id, msg_id, parse_mode="HTML",
+            )
+        except Exception:
+            bot.send_message(chat_id, "✅ Режим: <b>QR-код</b>", parse_mode="HTML")
+
+    # ── Установить режим КОД ──
+    elif data == "adm_set_mode_kod":
+        if not is_admin(uid):
+            return
+        queue_mode["value"] = "kod"
+        try:
+            bot.edit_message_text(
+                f"╭─────────────────────\n"
+                f"├ ⚙️ <b>Режим очереди изменён</b>\n"
+                f"├\n"
+                f"├ ✅ Теперь принимаются только <b>КОД</b> заявки\n"
+                f"╰─────────────────────",
+                chat_id, msg_id, parse_mode="HTML",
+            )
+        except Exception:
+            bot.send_message(chat_id, "✅ Режим: <b>КОД</b>", parse_mode="HTML")
+
+    # ── Список номеров ──
+    elif data == "adm_number_list":
+        if not is_admin(uid):
+            return
+        entries = work_session["entries"]
+        if not entries:
+            bot.send_message(
+                chat_id,
+                "╭─────────────────────\n"
+                "├ 📋 <b>Список номеров пуст</b>\n"
+                "╰─────────────────────",
+                parse_mode="HTML",
+            )
+            return
+        # Строим клавиатуру: одна кнопка на каждый номер
+        m = InlineKeyboardMarkup()
+        for idx, e in enumerate(entries):
+            u = users_db.get(e["user_id"], {})
+            un = f"@{u['username']}" if u.get("username") else str(e["user_id"])
+            result_mark = " ✅" if e["result"] == "stood" else (" ❌" if e["result"] == "not_stood" else "")
+            lbl = f"{fmt_phone_display(e['phone'])}/{un}{result_mark}"
+            m.row(InlineKeyboardButton(lbl, callback_data=f"nl_entry_{idx}"))
+        start_str = work_session["start_time"].strftime("%d.%m %H:%M") if work_session["start_time"] else "—"
+        bot.send_message(
+            chat_id,
+            f"╭─────────────────────\n"
+            f"├ 📋 <b>Список номеров</b>\n"
+            f"├ Сессия с {start_str}\n"
+            f"├ Всего: <b>{len(entries)}</b>\n"
+            f"╰─────────────────────",
+            parse_mode="HTML",
+            reply_markup=m,
+        )
+
+    # ── Детали конкретного номера из списка ──
+    elif data.startswith("nl_entry_"):
+        if not is_admin(uid):
+            return
+        try:
+            entry_idx = int(data.split("nl_entry_")[1])
+            e = work_session["entries"][entry_idx]
+        except (IndexError, ValueError):
+            bot.send_message(chat_id, "❌ Запись не найдена.")
+            return
+        u = users_db.get(e["user_id"], {})
+        un = f"@{u['username']}" if u.get("username") else "—"
+        name = esc(u.get("first_name") or str(e["user_id"]))
+        fmt = "📷 QR-код" if e["format"] == "qr" else "🔢 КОД"
+        ts_str = e["ts"].strftime("%d.%m.%Y %H:%M") if e.get("ts") else "—"
+        if e["result"] == "stood":
+            result_str = "✅ Отстоял"
+        elif e["result"] == "not_stood":
+            result_str = "❌ Не отстоял"
+        elif e["result"] == "cancelled":
+            result_str = "🚫 Отменён"
+        else:
+            result_str = "⏳ Ожидает"
+        detail_text = (
+            f"╭─────────────────────\n"
+            f"├ 📋 <b>Номер #{entry_idx + 1}</b>\n"
+            f"├\n"
+            f"├ 📱 Номер: <code>{esc(fmt_phone_display(e['phone']))}</code>\n"
+            f"├ 👤 Имя: {name}\n"
+            f"├ 🔗 Username: {un}\n"
+            f"├ 🆔 ID: <code>{e['user_id']}</code>\n"
+            f"├ 📅 Дата: {ts_str}\n"
+            f"├ 📂 Формат: {fmt}\n"
+            f"├ 🏁 Статус: {result_str}\n"
+            f"╰─────────────────────"
+        )
+        # Кнопки отстоял/неотстоял только если ещё не обработан
+        if e["result"] is None:
+            mk = number_list_detail_btn(entry_idx)
+        else:
+            mk = InlineKeyboardMarkup()
+            mk.row(InlineKeyboardButton("◀️ Назад", callback_data="adm_number_list"))
+        bot.send_message(chat_id, detail_text, parse_mode="HTML", reply_markup=mk)
 
     # ── Статистика (общая) ──
     elif data == "adm_stats":
