@@ -767,6 +767,16 @@ def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
 def edit_message(chat_id, message_id, text, keyboard=None):
+    """Умное редактирование: caption для фото-сообщений, text для обычных."""
+    # Сначала пробуем edit_message_caption (работает если сообщение с фото)
+    try:
+        bot.edit_message_caption(
+            caption=text, chat_id=chat_id, message_id=message_id,
+            reply_markup=keyboard, parse_mode="HTML")
+        return
+    except Exception as e:
+        if "there is no caption" not in str(e).lower() and "message is not modified" not in str(e).lower():
+            pass  # сообщение не является фото — пробуем edit_message_text
     try:
         bot.edit_message_text(text, chat_id=chat_id, message_id=message_id,
                               reply_markup=keyboard, parse_mode="HTML")
