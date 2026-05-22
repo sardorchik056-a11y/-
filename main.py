@@ -491,9 +491,10 @@ def main_menu_keyboard(user_id=None):
     return kb
 
 def send_main_menu(message):
-    user_id  = message.from_user.id
-    username = message.from_user.username
-    bot.send_message(user_id, get_profile_text(user_id, username),
+    user_id    = message.from_user.id
+    username   = message.from_user.username
+    first_name = message.from_user.first_name
+    bot.send_message(user_id, get_profile_text(user_id, username, first_name),
                      reply_markup=main_menu_keyboard(user_id), parse_mode="HTML")
 
 def catalog_keyboard():
@@ -754,15 +755,23 @@ def get_display_stock(user_id: int, real_stock: int) -> int:
         return min(real_stock, 24)
     return real_stock
 
-def get_profile_text(user_id: int, username: str = None) -> str:
+def get_profile_text(user_id: int, username: str = None, first_name: str = None) -> str:
     user = get_user(user_id)
-    balance      = round(user["balance"], 2)  if user else 0.0
-    total_bought = user["total_bought"]        if user else 0
-    text  = f"Добро пожаловать, @{username or 'Пользователь'}!\n\n"
-    text += "╭─────────────────\n"
-    text += f'├ <tg-emoji emoji-id="6032693626394382504">🎟</tg-emoji> ID: {user_id}\n'
-    text += f'├ <tg-emoji emoji-id="5904462880941545555">🎟</tg-emoji> Куплено: {total_bought} акков\n'
-    text += f'├ <tg-emoji emoji-id="5258204546391351475">🎟</tg-emoji> Баланс: {balance}$\n'
+    balance      = round(user["balance"], 2) if user else 0.0
+    total_bought = user["total_bought"]      if user else 0
+    try:
+        reg_date = datetime.strptime(user["registered_at"][:19], "%Y-%m-%d %H:%M:%S") if user and user["registered_at"] else datetime.now()
+        days_in_bot = (datetime.now() - reg_date).days
+    except:
+        days_in_bot = 0
+    name = first_name or username or "Пользователь"
+    text  = "╭─────────────────\n"
+    text += f'├ 👤 Имя: {name}\n'
+    text += f'├ 🆔 ID: {user_id}\n'
+    text += f'├ 📎 Username: @{username or "нет"}\n'
+    text += f'├ 💰 Баланс: {balance}$\n'
+    text += f'├ 📦 Куплено: {total_bought} акков\n'
+    text += f'├ 📅 В боте: {days_in_bot} дн.\n'
     text += "╰─────────────────\n\n"
     text += " MAX | Главное меню\n"
     return text
@@ -1000,7 +1009,7 @@ def callback_handler(call):
     if data == "back_to_menu":
         user_states.pop(user_id, None)
         edit_message(chat_id, message_id,
-                     get_profile_text(user_id, username),
+                     get_profile_text(user_id, username, call.from_user.first_name),
                      main_menu_keyboard(user_id))
         bot.answer_callback_query(call.id)
 
