@@ -819,12 +819,12 @@ def get_profile_text(user_id: int, username: str = None, first_name: str = None)
         days_in_bot = 0
     name = first_name or username or "Пользователь"
     text  = "╭─────────────────\n"
-    text += f'├ <tg-emoji emoji-id="5260399854500191689">🎟</tg-emoji> : {name}\n'
+    text += f'├ <b><tg-emoji emoji-id="5260399854500191689">🎟</tg-emoji> : {name}\n'
     text += f'├ <tg-emoji emoji-id="5282843764451195532">🎟</tg-emoji> ID: {user_id}\n'
     text += f'├ <tg-emoji emoji-id="5323442290708985472">🎟</tg-emoji> User: @{username or "@none"}\n'
     text += f'├ <tg-emoji emoji-id="5258204546391351475">🎟</tg-emoji> Баланс: {balance}$\n'
     text += f'├ <tg-emoji emoji-id="5449407131675558756">🎟</tg-emoji> Куплено: {total_bought} акков\n'
-    text += f'├ <tg-emoji emoji-id="6030776052345737530">🎟</tg-emoji> В боте: {days_in_bot} дн.\n'
+    text += f'├ <tg-emoji emoji-id="6030776052345737530">🎟</tg-emoji> В боте: {days_in_bot} дн.</b>\n'
     text += "╰─────────────────\n"
     return text
 
@@ -1743,13 +1743,13 @@ def handle_message(message):
         insufficient = bal < total_price
 
         confirm_text = (
-            f" ПОДТВЕРЖДЕНИЕ ПОКУПКИ\n\n"
-            f"Товар: {product['emoji']} {product['name']}\n"
-            f"Количество: {quantity} шт\n"
-            f"Цена за шт: {product['price']}$\n"
-            f"Итого: {total_price}$\n\n"
-            f"💰 Ваш баланс: {bal}$\n"
-            f"💰 После покупки: {round(bal - total_price, 2)}$\n\n"
+            f" Подтверждение!\n\n"
+            f'<b><tg-emoji emoji-id="6030776052345737530">🎟</tg-emoji>Товар: {product['emoji']} {product['name']}\n'
+            f'<tg-emoji emoji-id="6039496266180726678">🎟</tg-emoji>Количество: {quantity} шт\n'
+            f'<tg-emoji emoji-id="5904462880941545555">🎟</tg-emoji>Цена за шт: {product['price']}$\n'
+            f'<tg-emoji emoji-id="6030833407339008632">🎟</tg-emoji>Итого: {total_price}$\n'
+            f'<tg-emoji emoji-id="5258204546391351475">🎟</tg-emoji>Ваш баланс: {bal}$\n'
+            f'<tg-emoji emoji-id="5258204546391351475">🎟</tg-emoji>После покупки: {round(bal - total_price, 2)}$</b>\n\n'
         )
         if insufficient:
             confirm_text += f"❌ Недостаточно средств! Нужно ещё {round(total_price - bal, 2)}$"
@@ -2044,8 +2044,8 @@ def process_payment(chat_id: int, user_id: int, amount: float, edit_msg_id=None)
         bot.send_message(user_id, "❌ Ошибка создания платежа. Попробуйте позже.")
         return
 
-    text = (f"💰 ПОПОЛНЕНИЕ БАЛАНСА\n\n"
-            f"Сумма: {amount}$\nВалюта: USDT\n\n"
+    text = (f'<tg-emoji emoji-id="5258108352008823107">🎟</tg-emoji> Пополнение баланса\n\n'
+            f'<tg-emoji emoji-id="5904462880941545555">🎟</tg-emoji>Сумма: {amount}$\n<tg-emoji emoji-id="5258185631355378853">🎟</tg-emoji>Валюта: USDT\n\n'
             f"Нажмите «Оплатить» и завершите оплату в CryptoBot.\n"
             f"Баланс пополнится автоматически в течение нескольких секунд.")
     kb = payment_keyboard(invoice_url)
