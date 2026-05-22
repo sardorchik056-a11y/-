@@ -498,13 +498,19 @@ def send_main_menu(message):
                      reply_markup=main_menu_keyboard(user_id), parse_mode="HTML")
 
 def catalog_keyboard():
-    kb = InlineKeyboardMarkup(row_width=1)
-    for key, p in get_all_products().items():
-        kb.add(InlineKeyboardButton(
+    kb = InlineKeyboardMarkup(row_width=2)
+    buttons = [
+        InlineKeyboardButton(
             f"{p['emoji']} {p['name']} — {p['price']}$",
             callback_data=f"buy_{key}"
-        ))
-    kb.add(InlineKeyboardButton(" Назад", callback_data="back_to_menu",
+        )
+        for key, p in get_all_products().items()
+    ]
+    for i in range(0, len(buttons) - len(buttons) % 2, 2):
+        kb.row(buttons[i], buttons[i + 1])
+    if len(buttons) % 2 != 0:
+        kb.row(buttons[-1])
+    kb.row(InlineKeyboardButton(" Назад", callback_data="back_to_menu",
                                 icon_custom_emoji_id=EMOJI_BACK))
     return kb
 
@@ -624,16 +630,32 @@ def terms_keyboard():
     )
     return kb
 
+def balance_info_keyboard():
+    kb = InlineKeyboardMarkup(row_width=2)
+    kb.row(
+        InlineKeyboardButton("💳 Пополнить", callback_data="deposit_menu"),
+        InlineKeyboardButton(" Назад", callback_data="back_to_menu",
+                             icon_custom_emoji_id=EMOJI_BACK),
+    )
+    return kb
+
 def balance_keyboard():
     kb = InlineKeyboardMarkup(row_width=2)
-    for amount in [5, 10, 25, 50]:
-        kb.add(InlineKeyboardButton(
-            f" {amount}$", callback_data=f"deposit_{amount}",
-            icon_custom_emoji_id=EMOJI_DEPOSIT
-        ))
-    kb.add(InlineKeyboardButton(" Другая сумма", callback_data="deposit_custom",
+    kb.row(
+        InlineKeyboardButton("5$",  callback_data="deposit_5"),
+        InlineKeyboardButton("10$", callback_data="deposit_10"),
+    )
+    kb.row(
+        InlineKeyboardButton("25$", callback_data="deposit_25"),
+        InlineKeyboardButton("50$", callback_data="deposit_50"),
+    )
+    kb.row(
+        InlineKeyboardButton("100$", callback_data="deposit_100"),
+        InlineKeyboardButton("250$", callback_data="deposit_250"),
+    )
+    kb.row(InlineKeyboardButton(" Другая сумма", callback_data="deposit_custom",
                                 icon_custom_emoji_id=EMOJI_CUSTOM))
-    kb.add(InlineKeyboardButton(" Назад", callback_data="back_to_menu",
+    kb.row(InlineKeyboardButton(" Назад", callback_data="balance",
                                 icon_custom_emoji_id=EMOJI_BACK))
     return kb
 
@@ -1111,9 +1133,23 @@ Web Token и JSON замене не подлежат если были рабо�
         bot.answer_callback_query(call.id)
 
     elif data == "balance":
-        bal  = get_user_balance(user_id)
-        text = f" ВАШ БАЛАНС\n\nТекущий баланс: {bal}$\n\nВыберите сумму для пополнения:"
-        edit_message(chat_id, message_id, text, balance_keyboard())
+        u    = get_user(user_id)
+        bal  = round(u["balance"], 2) if u else 0.0
+        name = call.from_user.first_name or username or "Пользователь"
+        text  = "💰 БАЛАНС\n\n"
+        text += "╭─────────────────\n"
+        text += f"├ 👤 Имя: {name}\n"
+        text += f"├ 🆔 ID: {user_id}\n"
+        text += f"├ 📎 Username: @{username or 'нет'}\n"
+        text += f"├ 💰 Баланс: {bal}$\n"
+        text += "╰─────────────────"
+        edit_message(chat_id, message_id, text, balance_info_keyboard())
+        bot.answer_callback_query(call.id)
+
+    elif data == "deposit_menu":
+        edit_message(chat_id, message_id,
+                     "💳 ПОПОЛНЕНИЕ\n\nВыберите сумму или введите свою:",
+                     balance_keyboard())
         bot.answer_callback_query(call.id)
 
     elif data.startswith("buy_"):
