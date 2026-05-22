@@ -448,27 +448,34 @@ def payment_watcher():
                         to_remove.append(invoice_id)
                         continue
 
-                    text = (f"✅ Оплата подтверждена!\n\n"
-                            f"Пополнено: {amount}$\n"
-                            f"Текущий баланс: {get_user_balance(uid)}$")
+                    text = (f'<tg-emoji emoji-id="5260399854500191689">🎟</tg-emoji> Оплата подтверждена!\n\n'
+                            f'<tg-emoji emoji-id="5258204546391351475">🎟</tg-emoji> Пополнено: {amount}$\n'
+                            f'<tg-emoji emoji-id="5258204546391351475">🎟</tg-emoji> Текущий баланс: {get_user_balance(uid)}$')
                     try:
-                        bot.edit_message_text(text, chat_id=chat_id,
-                                              message_id=msg_id, reply_markup=None)
+                        bot.edit_message_caption(
+                            caption=text, chat_id=chat_id, message_id=msg_id,
+                            reply_markup=None, parse_mode="HTML")
                     except:
                         try:
-                            bot.send_message(chat_id, text)
+                            bot.edit_message_text(text, chat_id=chat_id,
+                                                  message_id=msg_id, reply_markup=None,
+                                                  parse_mode="HTML")
                         except:
                             pass
                     to_remove.append(invoice_id)
 
                 elif status == "expired":
                     try:
-                        bot.edit_message_text(
-                            "⏰ Счёт истёк. Создайте новый.",
-                            chat_id=info["chat_id"],
-                            message_id=info["message_id"],
-                            reply_markup=None
-                        )
+                        try:
+                            bot.edit_message_caption(
+                                caption="⏰ Счёт истёк. Создайте новый.",
+                                chat_id=info["chat_id"], message_id=info["message_id"],
+                                reply_markup=None, parse_mode="HTML")
+                        except:
+                            bot.edit_message_text(
+                                "⏰ Счёт истёк. Создайте новый.",
+                                chat_id=info["chat_id"], message_id=info["message_id"],
+                                reply_markup=None, parse_mode="HTML")
                     except:
                         pass
                     to_remove.append(invoice_id)
@@ -2051,15 +2058,40 @@ def process_payment(chat_id: int, user_id: int, amount: float, edit_msg_id=None)
     kb = payment_keyboard(invoice_url)
 
     if edit_msg_id:
+        # Пробуем обновить существующее сообщение (caption для фото, text для обычных)
+        updated = False
         try:
-            bot.edit_message_text(text, chat_id=chat_id,
-                                  message_id=edit_msg_id, reply_markup=kb)
+            bot.edit_message_caption(
+                caption=text, chat_id=chat_id, message_id=edit_msg_id,
+                reply_markup=kb, parse_mode="HTML")
             msg_id = edit_msg_id
+            updated = True
         except:
-            sent   = bot.send_message(chat_id, text, reply_markup=kb)
+            pass
+        if not updated:
+            try:
+                bot.edit_message_text(text, chat_id=chat_id,
+                                      message_id=edit_msg_id, reply_markup=kb,
+                                      parse_mode="HTML")
+                msg_id = edit_msg_id
+                updated = True
+            except:
+                pass
+        if not updated:
+            photo_id = get_setting("menu_photo_file_id")
+            if photo_id:
+                sent = bot.send_photo(chat_id, photo_id, caption=text,
+                                      reply_markup=kb, parse_mode="HTML")
+            else:
+                sent = bot.send_message(chat_id, text, reply_markup=kb, parse_mode="HTML")
             msg_id = sent.message_id
     else:
-        sent   = bot.send_message(chat_id, text, reply_markup=kb)
+        photo_id = get_setting("menu_photo_file_id")
+        if photo_id:
+            sent = bot.send_photo(chat_id, photo_id, caption=text,
+                                  reply_markup=kb, parse_mode="HTML")
+        else:
+            sent = bot.send_message(chat_id, text, reply_markup=kb, parse_mode="HTML")
         msg_id = sent.message_id
 
     if invoice_id:
