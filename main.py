@@ -725,12 +725,12 @@ def cancel_payment_keyboard():
 
 def back_to_admin_keyboard():
     kb = InlineKeyboardMarkup()
-    kb.add(InlineKeyboardButton("◀️ Назад", callback_data="admin_panel"))
+    kb.add(InlineKeyboardButton("◀️Назад", callback_data="admin_panel"))
     return kb
 
 def back_to_admin_users_keyboard():
     kb = InlineKeyboardMarkup()
-    kb.add(InlineKeyboardButton("◀️ Назад", callback_data="admin_users"))
+    kb.add(InlineKeyboardButton("◀️Назад", callback_data="admin_users"))
     return kb
 
 def application_admin_keyboard(app_user_id: int):
@@ -788,14 +788,13 @@ def get_profile_text(user_id: int, username: str = None, first_name: str = None)
         days_in_bot = 0
     name = first_name or username or "Пользователь"
     text  = "╭─────────────────\n"
-    text += f'├ 👤 Имя: {name}\n'
-    text += f'├ 🆔 ID: {user_id}\n'
-    text += f'├ 📎 Username: @{username or "нет"}\n'
-    text += f'├ 💰 Баланс: {balance}$\n'
-    text += f'├ 📦 Куплено: {total_bought} акков\n'
-    text += f'├ 📅 В боте: {days_in_bot} дн.\n'
-    text += "╰─────────────────\n\n"
-    text += " MAX | Главное меню\n"
+    text += f'├ <tg-emoji emoji-id="5260399854500191689">🎟</tg-emoji> : {name}\n'
+    text += f'├ <tg-emoji emoji-id="5282843764451195532">🎟</tg-emoji> ID: {user_id}\n'
+    text += f'├ <tg-emoji emoji-id="5323442290708985472">🎟</tg-emoji> User: @{username or "@none"}\n'
+    text += f'├ <tg-emoji emoji-id="5258204546391351475">🎟</tg-emoji> Баланс: {balance}$\n'
+    text += f'├ <tg-emoji emoji-id="5449407131675558756">🎟</tg-emoji> Куплено: {total_bought} акков\n'
+    text += f'├ <tg-emoji emoji-id="5906909964328245730">🎟</tg-emoji> В боте: {days_in_bot} дн.\n'
+    text += "╰─────────────────\n"
     return text
 
 @bot.message_handler(commands=["start"])
