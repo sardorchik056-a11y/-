@@ -1,2152 +1,1964 @@
 import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+import sqlite3
+import os
+import time
 import requests
 import threading
-import time
-import datetime
-import re
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto
+from datetime import datetime
 
-BOT_TOKEN       = "8628524678:AAH6AuW7KdTF-_-OiVfVH5i_LJH5NLSDg1I"
-CRYPTOBOT_TOKEN = "583673:AAwGj7YtqTJZuSomTia1W08YRNo1udgrQiL"
-CRYPTOBOT_API   = "https://pay.crypt.bot/api"
-
-# ══════════════════════════════════════════════════════
-#  👑  СПИСОК АДМИНИСТРАТОРОВ
-# ══════════════════════════════════════════════════════
-ADMIN_IDS = [8118184388, 8521752725]
-
-PAYOUT_AMOUNT = 5.0
-QUEUE_ENABLED = True
-
-EMOJI_RULES   = "5258185631355378853"
-EMOJI_BALANCE = "5258204546391351475"
-EMOJI_SUBMIT  = "5449407131675558756"
-EMOJI_HISTORY = "6030776052345737530"
-EMOJI_STATS   = "5258330865674494479"
-EMOJI_BACK    = "6039539366177541657"
-EMOJI_ADMIN   = "5258185631355378853"
-EMOJI_CHECK   = "5282843764451195532"
-EMOJI_QUEUE   = "5323442290708985472"
-EMOJI_WISS    = "5258043150110301407"
-
-BANNER_FILE_ID = "AgACAgIAAxkBAAMSagsnVdxEcPVJgVA5Q83bPAi3iycAAiEeaxsEqVlIe-1MMXEG-AEBAAMCAAN5AAM7BA"
-
-# ══════════════════════════════════════════════════════
-#  Хранилища данных
-# ══════════════════════════════════════════════════════
-users_db           = {}   # user_id → dict
-queue              = []   # очередь: список user_id
-pending            = {}   # user_id → user_msg_id  (заявка на проверке)
-pending_admin_msgs = {}   # user_id → [(admin_chat_id, admin_msg_id), ...]
-withdraw_requests  = {}   # req_id  → dict
-withdraw_counter   = [0]
-
-# Режим очереди: "qr" или "kod"
-queue_mode = {"value": "qr"}   # по умолчанию QR
-
-# pending_kod_request[user_id] = {"phone": ..., "admin_msgs": [...]}  — ждём ввода кода
-pending_kod_request = {}
-# pending_kod_input[user_id] = True — пользователь вводит 6-значный код
-pending_kod_input   = set()
-
-# ── Ворк-сессия ──
-work_session = {
-    "active":       False,          # True = ворк включён
-    "start_time":   None,           # datetime когда включили
-    "entries":      [],             # список dict {user_id, phone, format, ts, result}
-    # result: None | "stood" | "not_stood"
-}
-
-settings = {
-    "payout": PAYOUT_AMOUNT,
-    "rules": (
-        '<b>1. Оплата 💬</b>\n\n'
-        '• <blockquote>Номер должен простоять 5 минут\n'
-        '• Вы получаете 4.5 $ за один сеанс аренды\n'
-        '• Если номер слетел до 5 минут — оплата не начисляется</blockquote>\n\n'
-        '2. Обязанности сдатчика 💬\n\n'
-        '• <blockquote>Нельзя отвязывать номер\n'
-        '• Отвяз — штраф 15 $ (списывается с вашего баланса)\n'
-        '• Нельзя сдавать один и тот же номер через несколько раз</blockquote>\n\n'
-        '3. Очередь 💬\n\n'
-        '• <blockquote>Номера принимаются строго по очереди\n'
-        '• Если ваш номер сейчас используется — ждите, пока освободится</blockquote>'
-    ),
-}
-
-user_states       = {}    # user_id → state string or dict
-waiting_for_photo = set()
-waiting_for_qr    = set()
-admin_states      = {}
-
-# pending_scan_confirm[user_id] = True когда ждём "отсканировал" или "отмена"
-pending_scan_confirm = {}
+BOT_TOKEN = "8647713741:AAHTMRqQImX8cRMAU8oxHBvpMBbHGudGR5s"
+CRYPTOBOT_TOKEN = "562214:AABJIaVpSkcIR7FvY7B8Oh3TszuqCUgi0Tk"
+ADMIN_IDS = [8118184388, 8276697984, 8115654734]
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# ══════════════════════════════════════════════════════
-#  Вспомогательные функции
-# ══════════════════════════════════════════════════════
-def get_user(user_id):
-    if user_id not in users_db:
-        users_db[user_id] = {
-            "balance":        0.0,
-            "numbers_rented": 0,
-            "history":        [],
-            "banned":         False,
-            "username":       "",
-            "first_name":     "",
-        }
-    return users_db[user_id]
+try:
+    bot.remove_webhook()
+    print("✅ Вебхук удалён")
+except:
+    pass
+time.sleep(1)
 
-def get_status(user):
-    return "Активен" if user["numbers_rented"] >= 1 else "Неактивен"
+DB_FILE = "bot.db"
 
-def esc(text):
-    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+user_states = {}
+active_invoices = {}
+user_stock_cap = {}
 
-def is_admin(user_id):
-    return user_id in ADMIN_IDS
+EMOJI_CATALOG   = "5445221832074483553"
+EMOJI_REFERRAL  = "5332724926216428039"
+EMOJI_SUPPORT   = "5201691993775818138"
+EMOJI_TERMS     = "5444856076954520455"
+EMOJI_BALANCE   = "5312123810638483121"
+EMOJI_BACK      = "6039539366177541657"
+EMOJI_PAY       = "6030776052345737530"
+EMOJI_CANCEL    = "6039539366177541657"
+EMOJI_REF_LINK  = "5260730055880876557"
+EMOJI_REF_STATS = "5258330865674494479"
+EMOJI_HOME      = "5260399854500191689"
+EMOJI_INVITE    = "5258513401784573443"
+EMOJI_BUY       = "5258185631355378853"
+EMOJI_DEPOSIT   = "6039496266180726678"
+EMOJI_CUSTOM    = "6039496266180726678"
+EMOJI_AGREE     = "6041720006973067267"
 
-def em(eid, fallback="⭐"):
-    return f'<tg-emoji emoji-id="{eid}">{fallback}</tg-emoji>'
+_db_lock = threading.Lock()
+_conn: sqlite3.Connection = None
 
-def notify_all_admins(text="", markup=None, photo=None, caption=None):
-    sent = []
-    for admin_id in ADMIN_IDS:
-        try:
-            if photo:
-                m = bot.send_photo(admin_id, photo, caption=caption,
-                                   parse_mode="HTML", reply_markup=markup)
-            else:
-                m = bot.send_message(admin_id, text,
-                                     parse_mode="HTML", reply_markup=markup)
-            sent.append((admin_id, m.message_id))
-        except Exception as e:
-            print(f"[notify_admin {admin_id}] {e}")
-    return sent
+def _open_connection():
+    global _conn
+    _conn = sqlite3.connect(DB_FILE, check_same_thread=False, timeout=15)
+    _conn.row_factory = sqlite3.Row
+    _conn.execute("PRAGMA journal_mode=WAL")
+    _conn.execute("PRAGMA synchronous=NORMAL")
+    _conn.execute("PRAGMA foreign_keys=ON")
+    _conn.execute("PRAGMA cache_size=-8000")
+    _conn.commit()
 
-def notify_all_users(text):
-    """Разослать уведомление всем пользователям."""
-    count = 0
-    for u_id in list(users_db.keys()):
-        try:
-            bot.send_message(u_id, text, parse_mode="HTML")
-            count += 1
-        except Exception:
-            pass
-    return count
+def db_exec(query: str, params=(), fetchone=False, fetchall=False):
+    with _db_lock:
+        cur = _conn.execute(query, params)
+        _conn.commit()
+        if fetchone:
+            return cur.fetchone()
+        if fetchall:
+            return cur.fetchall()
+        return cur
 
-def is_valid_phone(phone: str) -> bool:
-    """Проверка формата: 11 цифр, начинается с 7 или 8."""
-    cleaned = re.sub(r"[\s\-\(\)\+]", "", phone)
-    return bool(re.match(r"^[78]\d{10}$", cleaned))
+def init_db():
+    with _db_lock:
+        _conn.executescript("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id           INTEGER PRIMARY KEY,
+                username          TEXT,
+                balance           REAL    NOT NULL DEFAULT 0.0,
+                total_bought      INTEGER NOT NULL DEFAULT 0,
+                referrer_id       INTEGER,
+                referral_earnings REAL    NOT NULL DEFAULT 0.0,
+                is_banned         INTEGER NOT NULL DEFAULT 0,
+                is_approved       INTEGER NOT NULL DEFAULT 0,
+                registered_at     TEXT
+            );
 
-def format_phone(phone: str) -> str:
-    """Нормализовать номер — убрать всё кроме цифр, заменить 8 на 7."""
-    cleaned = re.sub(r"[\s\-\(\)\+]", "", phone)
-    if cleaned.startswith("8"):
-        cleaned = "7" + cleaned[1:]
-    return cleaned
+            CREATE TABLE IF NOT EXISTS referrals (
+                referrer_id INTEGER NOT NULL,
+                referral_id INTEGER NOT NULL,
+                PRIMARY KEY (referrer_id, referral_id)
+            );
 
-def fmt_phone_display(phone: str) -> str:
-    """Красивый вид номера: +7XXXXXXXXXX."""
-    p = format_phone(phone)
-    return f"+{p}" if p else phone
+            CREATE TABLE IF NOT EXISTS applications (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id      INTEGER NOT NULL,
+                username     TEXT,
+                status       TEXT NOT NULL DEFAULT 'pending',
+                applied_at   TEXT
+            );
 
-# ══════════════════════════════════════════════════════
-#  CryptoBot
-# ══════════════════════════════════════════════════════
-def cryptobot_create_check(amount: float, currency: str = "USDT") -> dict | None:
-    try:
-        resp = requests.post(
-            f"{CRYPTOBOT_API}/createCheck",
-            headers={"Crypto-Pay-API-Token": CRYPTOBOT_TOKEN},
-            json={"asset": currency, "amount": str(amount)},
-            timeout=10,
+            CREATE TABLE IF NOT EXISTS products (
+                product_key TEXT PRIMARY KEY,
+                name        TEXT NOT NULL,
+                emoji       TEXT NOT NULL DEFAULT '📦',
+                price       REAL NOT NULL,
+                stock       INTEGER NOT NULL DEFAULT 0,
+                description TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE TABLE IF NOT EXISTS product_items (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                product_key  TEXT NOT NULL,
+                content      TEXT NOT NULL,
+                is_used      INTEGER NOT NULL DEFAULT 0,
+                added_at     TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS purchases (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id      INTEGER NOT NULL,
+                product_key  TEXT    NOT NULL,
+                quantity     INTEGER NOT NULL,
+                amount       REAL    NOT NULL,
+                purchased_at TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS udv_mode (
+                user_id INTEGER PRIMARY KEY,
+                enabled INTEGER NOT NULL DEFAULT 0
+            );
+        """)
+        _conn.commit()
+
+        count = _conn.execute("SELECT COUNT(*) FROM products").fetchone()[0]
+        if count == 0:
+            _conn.executemany(
+                "INSERT INTO products(product_key,name,emoji,price,stock,description) VALUES(?,?,?,?,?,?)",
+                [
+                    ("web_token", "Web Token", "🔑", 2.50, 0,
+                     "Токен доступа, готов к использованию"),
+                    ("json",      "JSON",       "📄", 3.00, 0,
+                     "Полные данные в JSON формате"),
+                    ("autoreg",   "Авторег",    "🤖", 1.80, 0,
+                     "Аккаунт зарегистрированный на SIM"),
+                ]
+            )
+            _conn.commit()
+
+def register_user(user_id: int, username: str = None):
+    db_exec(
+        """INSERT OR IGNORE INTO users
+           (user_id, username, balance, total_bought, referral_earnings, is_banned, is_approved, registered_at)
+           VALUES (?, ?, 0.0, 0, 0.0, 0, 0, ?)""",
+        (user_id, username, str(datetime.now()))
+    )
+
+def get_user(user_id: int):
+    return db_exec("SELECT * FROM users WHERE user_id=?", (user_id,), fetchone=True)
+
+def get_all_users():
+    return db_exec("SELECT * FROM users", fetchall=True)
+
+def get_user_balance(user_id: int) -> float:
+    row = db_exec("SELECT balance FROM users WHERE user_id=?", (user_id,), fetchone=True)
+    return round(row["balance"], 2) if row else 0.0
+
+def add_balance(user_id: int, amount: float):
+    db_exec(
+        "UPDATE users SET balance=ROUND(balance+?,2) WHERE user_id=?",
+        (amount, user_id)
+    )
+
+def deduct_balance(user_id: int, amount: float) -> bool:
+    with _db_lock:
+        row = _conn.execute(
+            "SELECT balance FROM users WHERE user_id=?", (user_id,)
+        ).fetchone()
+        if row and row["balance"] >= amount:
+            _conn.execute(
+                "UPDATE users SET balance=ROUND(balance-?,2) WHERE user_id=?",
+                (amount, user_id)
+            )
+            _conn.commit()
+            return True
+    return False
+
+def set_banned(user_id: int, banned: bool):
+    db_exec("UPDATE users SET is_banned=? WHERE user_id=?", (1 if banned else 0, user_id))
+
+def set_approved(user_id: int, approved: bool):
+    db_exec("UPDATE users SET is_approved=? WHERE user_id=?", (1 if approved else 0, user_id))
+
+def is_approved(user_id: int) -> bool:
+    if user_id in ADMIN_IDS:
+        return True
+    row = db_exec("SELECT is_approved FROM users WHERE user_id=?", (user_id,), fetchone=True)
+    return bool(row["is_approved"]) if row else False
+
+def is_udv_mode_enabled(user_id: int) -> bool:
+    """Проверяет включен ли режим UDV для пользователя"""
+    row = db_exec("SELECT enabled FROM udv_mode WHERE user_id=?", (user_id,), fetchone=True)
+    return bool(row["enabled"]) if row else False
+
+def set_udv_mode(user_id: int, enabled: bool):
+    """Включает/выключает режим UDV"""
+    db_exec(
+        "INSERT OR REPLACE INTO udv_mode (user_id, enabled) VALUES (?, ?)",
+        (user_id, 1 if enabled else 0)
+    )
+
+def create_application(user_id: int, username: str = None):
+    """Создаёт заявку, если ещё нет активной/принятой."""
+    existing = db_exec(
+        "SELECT * FROM applications WHERE user_id=? AND status IN ('pending','approved')",
+        (user_id,), fetchone=True
+    )
+    if existing:
+        return False
+    db_exec(
+        "INSERT INTO applications(user_id,username,status,applied_at) VALUES(?,?,?,?)",
+        (user_id, username, "pending", str(datetime.now()))
+    )
+    return True
+
+def get_pending_applications():
+    return db_exec(
+        "SELECT * FROM applications WHERE status='pending'", fetchall=True
+    )
+
+def set_application_status(user_id: int, status: str):
+    db_exec(
+        "UPDATE applications SET status=? WHERE user_id=? AND status='pending'",
+        (status, user_id)
+    )
+
+def add_referral(referrer_id: int, referral_id: int):
+    db_exec(
+        "INSERT OR IGNORE INTO referrals(referrer_id,referral_id) VALUES(?,?)",
+        (referrer_id, referral_id)
+    )
+    db_exec(
+        "UPDATE users SET referrer_id=? WHERE user_id=? AND referrer_id IS NULL",
+        (referrer_id, referral_id)
+    )
+
+def get_referrals(referrer_id: int):
+    return db_exec(
+        "SELECT referral_id FROM referrals WHERE referrer_id=?",
+        (referrer_id,), fetchall=True
+    )
+
+def add_referral_earning(referrer_id: int, amount: float):
+    db_exec(
+        """UPDATE users
+           SET balance=ROUND(balance+?,2),
+               referral_earnings=ROUND(referral_earnings+?,2)
+           WHERE user_id=?""",
+        (amount, amount, referrer_id)
+    )
+
+def get_all_products() -> dict:
+    rows = db_exec("SELECT * FROM products", fetchall=True)
+    return {r["product_key"]: dict(r) for r in rows}
+
+def get_product(product_key: str):
+    row = db_exec(
+        "SELECT * FROM products WHERE product_key=?", (product_key,), fetchone=True
+    )
+    return dict(row) if row else None
+
+def upsert_product(product_key, name, emoji, price, stock, description):
+    db_exec(
+        """INSERT INTO products(product_key,name,emoji,price,stock,description)
+           VALUES(?,?,?,?,?,?)
+           ON CONFLICT(product_key) DO UPDATE SET
+             name=excluded.name, emoji=excluded.emoji,
+             price=excluded.price, stock=excluded.stock,
+             description=excluded.description""",
+        (product_key, name, emoji, price, stock, description)
+    )
+
+def update_product_field(product_key: str, field: str, value):
+    allowed = {"name", "emoji", "price", "stock", "description"}
+    if field not in allowed:
+        return
+    db_exec(f"UPDATE products SET {field}=? WHERE product_key=?", (value, product_key))
+
+def add_stock(product_key: str, amount: int):
+    db_exec(
+        "UPDATE products SET stock=stock+? WHERE product_key=?",
+        (amount, product_key)
+    )
+
+def delete_product(product_key: str):
+    db_exec("DELETE FROM products WHERE product_key=?", (product_key,))
+    db_exec("DELETE FROM product_items WHERE product_key=?", (product_key,))
+
+def set_product_items(product_key: str, items: list):
+    """Заменяет весь набор текстов товара (фиксированный контент для выдачи всем)."""
+    with _db_lock:
+        _conn.execute("DELETE FROM product_items WHERE product_key=?", (product_key,))
+        _conn.executemany(
+            "INSERT INTO product_items(product_key,content,is_used,added_at) VALUES(?,?,0,?)",
+            [(product_key, item, str(datetime.now())) for item in items]
         )
-        data = resp.json()
-        if data.get("ok"):
-            return data["result"]
-        return None
+        _conn.commit()
+
+def add_product_items(product_key: str, items: list):
+    """Добавляет тексты к существующему набору товара."""
+    with _db_lock:
+        _conn.executemany(
+            "INSERT INTO product_items(product_key,content,is_used,added_at) VALUES(?,?,0,?)",
+            [(product_key, item, str(datetime.now())) for item in items]
+        )
+        _conn.commit()
+
+def get_all_items(product_key: str) -> list:
+    """Возвращает весь фиксированный набор текстов товара (не расходуются)."""
+    rows = db_exec(
+        "SELECT content FROM product_items WHERE product_key=? ORDER BY id",
+        (product_key,), fetchall=True
+    )
+    return [r["content"] for r in rows]
+
+def get_items_stats(product_key: str) -> dict:
+    total = db_exec(
+        "SELECT COUNT(*) as cnt FROM product_items WHERE product_key=?",
+        (product_key,), fetchone=True
+    )
+    free = db_exec(
+        "SELECT COUNT(*) as cnt FROM product_items WHERE product_key=? AND is_used=0",
+        (product_key,), fetchone=True
+    )
+    used = db_exec(
+        "SELECT COUNT(*) as cnt FROM product_items WHERE product_key=? AND is_used=1",
+        (product_key,), fetchone=True
+    )
+    return {
+        "total": total["cnt"] if total else 0,
+        "free":  free["cnt"]  if free  else 0,
+        "used":  used["cnt"]  if used  else 0,
+    }
+
+def delete_product_items(product_key: str):
+    """Удаляет весь контент товара."""
+    db_exec("DELETE FROM product_items WHERE product_key=?", (product_key,))
+
+def add_purchase(user_id: int, product_key: str, quantity: int, amount: float):
+    db_exec(
+        """INSERT INTO purchases(user_id,product_key,quantity,amount,purchased_at)
+           VALUES(?,?,?,?,?)""",
+        (user_id, product_key, quantity, amount, str(datetime.now()))
+    )
+    db_exec(
+        "UPDATE users SET total_bought=total_bought+? WHERE user_id=?",
+        (quantity, user_id)
+    )
+
+def get_user_purchases(user_id: int):
+    return db_exec(
+        "SELECT * FROM purchases WHERE user_id=?", (user_id,), fetchall=True
+    )
+
+def get_all_purchases():
+    return db_exec("SELECT * FROM purchases", fetchall=True)
+
+def create_invoice(amount: float, user_id: int):
+    url = "https://pay.crypt.bot/api/createInvoice"
+    headers = {
+        "Crypto-Pay-API-Token": CRYPTOBOT_TOKEN,
+        "Content-Type": "application/json"
+    }
+    data = {
+        "asset": "USDT",
+        "amount": str(amount),
+        "description": f"Пополнение баланса. User ID: {user_id}",
+        "expires_in": 3600
+    }
+    try:
+        r = requests.post(url, headers=headers, json=data, timeout=10)
+        result = r.json()
+        if result.get("ok"):
+            inv = result["result"]
+            return inv["invoice_id"], inv["bot_invoice_url"]
     except Exception as e:
-        print(f"CryptoBot error: {e}")
-        return None
+        print(f"Ошибка создания инвойса: {e}")
+    return None, None
 
-# ══════════════════════════════════════════════════════
-#  Фоновый поток — автообновление позиции каждые 5 мин
-# ══════════════════════════════════════════════════════
-def _queue_updater():
+def check_invoice_status(invoice_id):
+    url = "https://pay.crypt.bot/api/getInvoices"
+    headers = {"Crypto-Pay-API-Token": CRYPTOBOT_TOKEN}
+    try:
+        r = requests.get(url, headers=headers,
+                         params={"invoice_ids": str(invoice_id)}, timeout=10)
+        result = r.json()
+        if result.get("ok"):
+            items = result["result"].get("items", [])
+            if items:
+                return items[0].get("status")
+    except Exception as e:
+        print(f"Ошибка проверки инвойса: {e}")
+    return None
+
+def payment_watcher():
     while True:
-        time.sleep(300)
-        snapshot = list(queue)
-        total    = len(snapshot)
-        for i, user_id in enumerate(snapshot):
-            pos = i + 1
-            if pos == 1:
-                continue
+        time.sleep(3)
+        if not active_invoices:
+            continue
+        to_remove = []
+        for invoice_id, info in list(active_invoices.items()):
             try:
-                bot.send_message(
-                    user_id,
-                    f"╭─────────────────────\n"
-                    f'├ {em(EMOJI_QUEUE,"🔄")} <b>Обновление очереди</b>\n'
-                    f"├\n"
-                    f"├ Ваша позиция: <b>{pos}</b> из <b>{total}</b>\n"
-                    f"╰─────────────────────",
-                    parse_mode="HTML",
-                )
-            except Exception:
-                pass
+                status = check_invoice_status(invoice_id)
+                if status == "paid":
+                    uid      = info["user_id"]
+                    amount   = info["amount"]
+                    chat_id  = info["chat_id"]
+                    msg_id   = info["message_id"]
 
-threading.Thread(target=_queue_updater, daemon=True).start()
+                    add_balance(uid, amount)
+                    user_stock_cap[uid] = True
 
-# ══════════════════════════════════════════════════════
-#  Тексты
-# ══════════════════════════════════════════════════════
-def queue_text(pos):
-    total = len(queue)
-    return (
-        f"╭─────────────────────\n"
-        f'├ <b>{em(EMOJI_QUEUE,"⏳")} Вы в очереди</b>\n'
-        f"├\n"
-        f"├ Ваша позиция: <b>{pos}</b> из <b>{total}</b>\n"
-        f"├\n"
-        f"├ Позиция обновляется каждые 5 минут\n"
-        f"╰─────────────────────"
-    )
+                    user = get_user(uid)
+                    referrer_id = user["referrer_id"] if user else None
+                    if referrer_id:
+                        bonus = round(amount * 0.1, 2)
+                        add_referral_earning(referrer_id, bonus)
+                        try:
+                            bot.send_message(int(referrer_id),
+                                f"🎁 Ваш реферал пополнил баланс на {amount}$!\n"
+                                f"💰 Вам начислено: +{bonus}$")
+                        except:
+                            pass
 
-def welcome_text(tg_user, user):
-    name     = esc(tg_user.first_name or "—")
-    username = f"@{esc(tg_user.username)}" if tg_user.username else "—"
-    work_status = "🟢 Ворк активен" if work_session["active"] else "🔴 Ворк не активен"
-    return (
-        f"╭─────────────────────\n"
-        f'├ <b><tg-emoji emoji-id="5260399854500191689">🎟</tg-emoji> {name}</b>\n'
-        f'├ <tg-emoji emoji-id="5282843764451195532">🎟</tg-emoji> ID: <code>{tg_user.id}</code>\n'
-        f'├ <tg-emoji emoji-id="5323442290708985472">🎟</tg-emoji> : {username}\n'
-        f"├\n"
-        f'├ <tg-emoji emoji-id="5258204546391351475">🎟</tg-emoji> Баланс: <b>${user["balance"]:.2f}</b>\n'
-        f'├ <tg-emoji emoji-id="5449407131675558756">🎟</tg-emoji> Сдано: <b>{user["numbers_rented"]}</b> номеров\n'
-        f'├ <tg-emoji emoji-id="5258185631355378853">🎟</tg-emoji> Статус: {get_status(user)}\n'
-        f"├\n"
-        f"├ {work_status}\n"
-        f"╰─────────────────────"
-    )
+                    # Не показываем уведомление если включен режим UDV
+                    if is_udv_mode_enabled(uid):
+                        to_remove.append(invoice_id)
+                        continue
 
-def rules_text():
-    return settings["rules"]
+                    text = (f"✅ Оплата подтверждена!\n\n"
+                            f"Пополнено: {amount}$\n"
+                            f"Текущий баланс: {get_user_balance(uid)}$")
+                    try:
+                        bot.edit_message_text(text, chat_id=chat_id,
+                                              message_id=msg_id, reply_markup=None)
+                    except:
+                        try:
+                            bot.send_message(chat_id, text)
+                        except:
+                            pass
+                    to_remove.append(invoice_id)
 
-def balance_text(user):
-    if user["history"]:
-        lines = ""
-        for h in reversed(user["history"][-5:]):
-            sign  = "+" if h["amount"] > 0 else ""
-            lines += f"├ {h['date']} — <b>{sign}${h['amount']:.2f}</b> ({h['status']})\n"
-    else:
-        lines = "├ История пуста\n"
-    return (
-        f"╭─────────────────────\n"
-        f"├ <b>{em(EMOJI_BALANCE,'💰')} Ваш баланс</b>\n"
-        f"├\n"
-        f'├ Доступно: <b>${user["balance"]:.2f}</b>\n'
-        f"├\n"
-        f"├ <b>Последние операции:</b>\n"
-        f"{lines}"
-        f"╰─────────────────────"
-    )
+                elif status == "expired":
+                    try:
+                        bot.edit_message_text(
+                            "⏰ Счёт истёк. Создайте новый.",
+                            chat_id=info["chat_id"],
+                            message_id=info["message_id"],
+                            reply_markup=None
+                        )
+                    except:
+                        pass
+                    to_remove.append(invoice_id)
+            except Exception as e:
+                print(f"Ошибка watcher: {e}")
+        for inv_id in to_remove:
+            active_invoices.pop(inv_id, None)
 
-def withdraw_text(user):
-    return (
-        f"╭─────────────────────\n"
-        f"├ <b>{em(EMOJI_BALANCE,'💸')} Вывод средств</b>\n"
-        f"├\n"
-        f'├ Доступно: <b>${user["balance"]:.2f}</b>\n'
-        f"├\n"
-        f"├ Минимальная сумма: <b>$1.00</b>\n"
-        f"├ Выплата через: <b>@CryptoBot</b>\n"
-        f"├\n"
-        f"├ Введите сумму для вывода\n"
-        f"╰─────────────────────"
-    )
+def apply_keyboard():
+    """Клавиатура для неодобренного пользователя."""
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton("📋 Подать заявку", callback_data="send_application"))
+    return kb
 
-def withdraw_confirm_text(amount: float, user):
-    return (
-        f"╭─────────────────────\n"
-        f"├ <b>{em(EMOJI_BALANCE,'💸')} Подтверждение вывода</b>\n"
-        f"├\n"
-        f'├ Сумма: <b>${amount:.2f}</b>\n'
-        f'├ Останется: <b>${user["balance"] - amount:.2f}</b>\n'
-        f"├ Способ: <b>@CryptoBot (USDT)</b>\n"
-        f"├\n"
-        f"├ Подтвердите заявку на вывод\n"
-        f"╰─────────────────────"
-    )
+def oferta_keyboard():
+    """Клавиатура после отправки заявки — кнопка ознакомления с офертой."""
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton("✅ Ознакомился", callback_data="oferta_acknowledged"))
+    return kb
 
-def withdraw_pending_admin_text(req_id, user_id, amount, first_name, username):
-    return (
-        f"╭─────────────────────\n"
-        f"├ <b>💸 Заявка на вывод #{req_id}</b>\n"
-        f"├\n"
-        f"├ Имя: {first_name}\n"
-        f"├ Username: {username}\n"
-        f"├ ID: <code>{user_id}</code>\n"
-        f"├ Сумма: <b>${amount:.2f} USDT</b>\n"
-        f"╰─────────────────────"
-    )
-
-def submit_price_text():
-    amt = settings["payout"]
-    return (
-        f"╭─────────────────────\n"
-        f"├ <b>{em(EMOJI_SUBMIT,'📦')} Сдать номер</b>\n"
-        f"├\n"
-        f"├ Выплата за номер: <b>${amt:.2f}</b>\n"
-        f"├\n"
-        f"├ Введите номер телефона\n"
-        f"├ Пример: <code>+79001234567</code>\n"
-        f"╰─────────────────────"
-    )
-
-def history_text(user):
-    if not user["history"]:
-        body = "├ История операций пуста\n"
-    else:
-        body = ""
-        for h in reversed(user["history"][-10:]):
-            sign  = "+" if h["amount"] > 0 else ""
-            body += f"├ {h['date']} {sign}${h['amount']:.2f} — {h['status']}\n"
-    return (
-        f"╭─────────────────────\n"
-        f'├ <b><tg-emoji emoji-id="6030776052345737530">🎟</tg-emoji> История операций</b>\n'
-        f"├\n"
-        f"{body}"
-        f"╰─────────────────────"
-    )
-
-def statistics_text():
-    return (
-        f"╭─────────────────────\n"
-        f"├ <b>{em(EMOJI_STATS,'📊')} Статистика</b>\n"
-        f"├\n"
-        f"├ Пользователей: <b>{len(users_db)}</b>\n"
-        f"├ Сдано номеров: <b>{sum(u['numbers_rented'] for u in users_db.values())}</b>\n"
-        f"├ Выплачено: <b>${sum(u['balance'] for u in users_db.values()):.2f}</b>\n"
-        f"├ В очереди: <b>{len(queue)}</b>\n"
-        f"├ На проверке: <b>{len(pending)}</b>\n"
-        f"╰─────────────────────"
-    )
-
-def admin_top_stats_text():
-    medal = {1: "🥇", 2: "🥈", 3: "🥉"}
-    by_rented  = sorted(users_db.items(), key=lambda x: x[1]["numbers_rented"], reverse=True)[:20]
-    by_balance = sorted(users_db.items(), key=lambda x: x[1]["balance"],        reverse=True)[:20]
-
-    def row(i, uid, u, val):
-        m    = medal.get(i, f"{i}.")
-        name = esc(u.get("first_name") or str(uid))
-        un   = f"@{esc(u['username'])}" if u.get("username") else "—"
-        return f"├ {m} {name} ({un}) — <b>{val}</b>\n"
-
-    text  = "╭─────────────────────\n"
-    text += "├ 🏆 <b>ТОП-20 по сдаче номеров:</b>\n├\n"
-    if by_rented:
-        for i, (uid, u) in enumerate(by_rented, 1):
-            text += row(i, uid, u, f"{u['numbers_rented']} шт.")
-    else:
-        text += "├ Нет данных\n"
-    text += "├\n├ 💰 <b>ТОП-20 по балансу:</b>\n├\n"
-    if by_balance:
-        for i, (uid, u) in enumerate(by_balance, 1):
-            text += row(i, uid, u, f"${u['balance']:.2f}")
-    else:
-        text += "├ Нет данных\n"
-    text += "╰─────────────────────"
-    return text
-
-def work_session_list_text():
-    """Список номеров текущей (или последней) ворк-сессии."""
-    entries = work_session["entries"]
-    if not entries:
-        return "╭─────────────────────\n├ 📋 <b>Список номеров пуст</b>\n╰─────────────────────"
-
-    start_str = work_session["start_time"].strftime("%d.%m %H:%M") if work_session["start_time"] else "—"
-    text = (
-        f"╭─────────────────────\n"
-        f"├ 📋 <b>Ворк-сессия с {start_str}</b>\n"
-        f"├ Всего номеров: <b>{len(entries)}</b>\n"
-        f"├\n"
-    )
-    for idx, e in enumerate(entries, 1):
-        u = users_db.get(e["user_id"], {})
-        name = esc(u.get("first_name") or str(e["user_id"]))
-        fmt  = "QR" if e["format"] == "qr" else "КОД"
-        result_icon = ""
-        if e["result"] == "stood":
-            result_icon = " ✅"
-        elif e["result"] == "not_stood":
-            result_icon = " ❌"
-        text += f"├ <b>{idx}.</b> {esc(e['phone'])} [{fmt}] — {name}{result_icon}\n"
-    text += "╰─────────────────────"
-    return text
-
-# ══════════════════════════════════════════════════════
-#  Клавиатуры
-# ══════════════════════════════════════════════════════
-def main_menu():
-    m = InlineKeyboardMarkup()
-    m.row(
-        InlineKeyboardButton("Правила",     callback_data="rules",
-                             icon_custom_emoji_id=EMOJI_RULES),
-        InlineKeyboardButton("Баланс",      callback_data="balance",
+def main_menu_keyboard(user_id=None):
+    kb = InlineKeyboardMarkup(row_width=2)
+    kb.add(
+        InlineKeyboardButton(" Каталог",     callback_data="catalog",
+                             icon_custom_emoji_id=EMOJI_CATALOG),
+        InlineKeyboardButton(" Реф. баланс", callback_data="referral",
+                             icon_custom_emoji_id=EMOJI_REFERRAL),
+        InlineKeyboardButton(" Поддержка",   callback_data="support",
+                             icon_custom_emoji_id=EMOJI_SUPPORT),
+        InlineKeyboardButton(" Оферта",      url="https://graph.org/PRAVILA-05-12-296",
+                             icon_custom_emoji_id=EMOJI_TERMS),
+        InlineKeyboardButton(" Баланс",      callback_data="balance",
                              icon_custom_emoji_id=EMOJI_BALANCE),
     )
-    m.row(InlineKeyboardButton("Сдать номер", callback_data="submit_number",
-                               icon_custom_emoji_id=EMOJI_SUBMIT))
-    m.row(
-        InlineKeyboardButton("История",    callback_data="history",
-                             icon_custom_emoji_id=EMOJI_HISTORY),
-        InlineKeyboardButton("Статистика", callback_data="statistics",
-                             icon_custom_emoji_id=EMOJI_STATS),
+    return kb
+
+def catalog_keyboard():
+    kb = InlineKeyboardMarkup(row_width=1)
+    for key, p in get_all_products().items():
+        kb.add(InlineKeyboardButton(
+            f"{p['emoji']} {p['name']} — {p['price']}$",
+            callback_data=f"buy_{key}"
+        ))
+    kb.add(InlineKeyboardButton(" Назад", callback_data="back_to_menu",
+                                icon_custom_emoji_id=EMOJI_BACK))
+    return kb
+
+def admin_keyboard():
+    kb = InlineKeyboardMarkup(row_width=2)
+    kb.add(
+        InlineKeyboardButton("📦 Товары",            callback_data="admin_products"),
+        InlineKeyboardButton("👥 Пользователи",      callback_data="admin_users"),
+        InlineKeyboardButton("💰 Пополнения",        callback_data="admin_deposits"),
+        InlineKeyboardButton("📢 Рассылка",          callback_data="admin_mailing"),
+        InlineKeyboardButton("📊 Статистика",        callback_data="admin_stats"),
+        InlineKeyboardButton("⚠️ Бан пользователя", callback_data="admin_ban"),
+        InlineKeyboardButton("📋 Заявки",            callback_data="admin_applications"),
+        InlineKeyboardButton("🔙 Выход",             callback_data="back_to_menu"),
     )
-    return m
+    return kb
 
-def back_btn(target="back_menu"):
-    m = InlineKeyboardMarkup()
-    m.row(InlineKeyboardButton("Назад", callback_data=target,
-                               icon_custom_emoji_id=EMOJI_BACK))
-    return m
-
-def format_choice_menu():
-    """Выбор формата: QR-код или КОД."""
-    m = InlineKeyboardMarkup()
-    m.row(
-        InlineKeyboardButton("📷 QR-код",  callback_data="fmt_qr"),
-        InlineKeyboardButton("🔢 КОД",    callback_data="fmt_kod"),
+def admin_products_keyboard():
+    kb = InlineKeyboardMarkup(row_width=1)
+    kb.add(
+        InlineKeyboardButton("➕ Добавить товар",        callback_data="add_product"),
+        InlineKeyboardButton("✏️ Управление товаром",    callback_data="manage_product_list"),
+        InlineKeyboardButton("📦 Добавить контент",      callback_data="add_items_select"),
+        InlineKeyboardButton("📊 Статистика контента",   callback_data="items_stats_select"),
+        InlineKeyboardButton("🗑 Очистить контент",      callback_data="clear_items_select"),
+        InlineKeyboardButton("❌ Удалить товар",         callback_data="delete_product"),
+        InlineKeyboardButton("◀️ Назад",                 callback_data="admin_panel"),
     )
-    m.row(InlineKeyboardButton("Назад", callback_data="back_menu",
-                               icon_custom_emoji_id=EMOJI_BACK))
-    return m
+    return kb
 
-def send_qr_btn():
-    m = InlineKeyboardMarkup()
-    m.row(InlineKeyboardButton("✅ Отправить заявку", callback_data="send_qr"))
-    m.row(InlineKeyboardButton("Изменить QR-код",    callback_data="attach_qr"))
-    m.row(InlineKeyboardButton("Назад", callback_data="back_menu",
-                               icon_custom_emoji_id=EMOJI_BACK))
-    return m
+def manage_product_list_keyboard(action_prefix: str):
+    kb = InlineKeyboardMarkup(row_width=1)
+    for key, p in get_all_products().items():
+        stats = get_items_stats(key)
+        kb.add(InlineKeyboardButton(
+            f"{p['emoji']} {p['name']} | {p['price']}$ | 📦{stats['free']} свободно",
+            callback_data=f"{action_prefix}{key}"
+        ))
+    kb.add(InlineKeyboardButton("◀️ Назад", callback_data="admin_products"))
+    return kb
 
-def pending_menu():
-    m = InlineKeyboardMarkup()
-    m.row(InlineKeyboardButton("❌ Отменить заявку", callback_data="cancel_application"))
-    m.row(InlineKeyboardButton("Назад", callback_data="back_menu",
-                               icon_custom_emoji_id=EMOJI_BACK))
-    return m
-
-def balance_menu():
-    m = InlineKeyboardMarkup()
-    m.row(InlineKeyboardButton("Вывести", callback_data="withdraw",
-                               icon_custom_emoji_id=EMOJI_WISS))
-    m.row(InlineKeyboardButton("Назад",   callback_data="back_menu",
-                               icon_custom_emoji_id=EMOJI_BACK))
-    return m
-
-def withdraw_confirm_btn(amount: float):
-    m = InlineKeyboardMarkup()
-    m.row(
-        InlineKeyboardButton("✅ Подтвердить",
-                             callback_data=f"withdraw_confirm_{amount:.2f}"),
-        InlineKeyboardButton("❌ Отмена", callback_data="balance"),
+def product_manage_keyboard(product_key: str):
+    kb = InlineKeyboardMarkup(row_width=2)
+    kb.add(
+        InlineKeyboardButton("📦 Добавить контент",     callback_data=f"items_add_{product_key}"),
+        InlineKeyboardButton("📊 Контент статистика",   callback_data=f"items_stat_{product_key}"),
+        InlineKeyboardButton("💰 Изменить цену",        callback_data=f"prod_setprice_{product_key}"),
+        InlineKeyboardButton("✏️ Изменить название",    callback_data=f"prod_setname_{product_key}"),
+        InlineKeyboardButton("📝 Изменить описание",    callback_data=f"prod_setdesc_{product_key}"),
+        InlineKeyboardButton("🎭 Изменить эмодзи",     callback_data=f"prod_setemoji_{product_key}"),
+        InlineKeyboardButton("🔢 Изменить остаток",     callback_data=f"prod_setstock_{product_key}"),
+        InlineKeyboardButton("📋 Полное редактирование", callback_data=f"prod_full_{product_key}"),
+        InlineKeyboardButton("◀️ Назад",                callback_data="manage_product_list"),
     )
-    return m
+    return kb
 
-def admin_withdraw_btn(req_id: int):
-    m = InlineKeyboardMarkup()
-    m.row(
-        InlineKeyboardButton("✅ Принять",   callback_data=f"wd_take_{req_id}"),
-        InlineKeyboardButton("❌ Отклонить", callback_data=f"wd_reject_{req_id}"),
+def admin_users_keyboard():
+    kb = InlineKeyboardMarkup(row_width=1)
+    kb.add(
+        InlineKeyboardButton("📋 Список пользователей", callback_data="admin_user_list"),
+        InlineKeyboardButton("🔍 Найти пользователя",   callback_data="admin_find_user"),
+        InlineKeyboardButton("◀️ Назад",                callback_data="admin_panel"),
     )
-    return m
+    return kb
 
-def admin_review_qr_btn(user_id):
-    """Кнопки для QR-заявки: встал/не встал."""
-    m = InlineKeyboardMarkup()
-    m.row(
-        InlineKeyboardButton("✅ Встал",    callback_data=f"stood_{user_id}"),
-        InlineKeyboardButton("❌ Не встал", callback_data=f"not_stood_{user_id}"),
+def admin_deposits_keyboard():
+    kb = InlineKeyboardMarkup(row_width=1)
+    kb.add(
+        InlineKeyboardButton("💰 Ручное зачисление", callback_data="admin_manual_deposit"),
+        InlineKeyboardButton("◀️ Назад",             callback_data="admin_panel"),
     )
-    return m
+    return kb
 
-def admin_review_kod_btn(user_id):
-    """Кнопки для КОД-заявки: встал/не встал."""
-    m = InlineKeyboardMarkup()
-    m.row(
-        InlineKeyboardButton("✅ Встал",    callback_data=f"stood_{user_id}"),
-        InlineKeyboardButton("❌ Не встал", callback_data=f"not_stood_{user_id}"),
+def referral_keyboard():
+    kb = InlineKeyboardMarkup(row_width=2)
+    kb.add(
+        InlineKeyboardButton(" Моя ссылка",   callback_data="copy_ref_link",
+                             icon_custom_emoji_id=EMOJI_REF_LINK),
+        InlineKeyboardButton(" Мои рефералы", callback_data="my_referrals",
+                             icon_custom_emoji_id=EMOJI_REF_STATS),
+        InlineKeyboardButton(" Главное меню", callback_data="back_to_menu",
+                             icon_custom_emoji_id=EMOJI_HOME),
     )
-    return m
+    return kb
 
-def admin_panel_menu():
-    work_btn  = "🔴 СТОП ВОРК" if work_session["active"] else "🟢 СТАРТ ВОРК"
-    mode_icon = "📷 QR-код" if queue_mode["value"] == "qr" else "🔢 КОД"
-    m = InlineKeyboardMarkup()
-    m.row(InlineKeyboardButton(work_btn, callback_data="adm_toggle_work"))
-    m.row(
-        InlineKeyboardButton(f"⚙️ Очередь: {mode_icon}", callback_data="adm_queue_mode"),
-        InlineKeyboardButton("📋 Список номеров",          callback_data="adm_number_list"),
-    )
-    m.row(InlineKeyboardButton("📋 Список ворк-сессии", callback_data="adm_work_list"))
-    m.row(InlineKeyboardButton("📊 Статистика",         callback_data="adm_stats"))
-    m.row(InlineKeyboardButton("🏆 Топ пользователей",  callback_data="adm_top_stats"))
-    m.row(
-        InlineKeyboardButton("🔍 Проверка юзера",  callback_data="adm_check"),
-        InlineKeyboardButton("💰 Выдать баланс",   callback_data="adm_give"),
-    )
-    m.row(
-        InlineKeyboardButton("➖ Снять баланс",    callback_data="adm_take"),
-        InlineKeyboardButton("🔄 Обнулить всех",   callback_data="adm_reset_all"),
-    )
-    m.row(InlineKeyboardButton("📢 Рассылка",          callback_data="adm_broadcast"))
-    m.row(InlineKeyboardButton("💵 Изменить выплату",  callback_data="adm_payout"))
-    return m
-
-def work_list_admin_btn(entry_idx):
-    """Кнопки «Отстоял / Не отстоял» для конкретной записи в ворк-списке."""
-    m = InlineKeyboardMarkup()
-    m.row(
-        InlineKeyboardButton("✅ Отстоял",     callback_data=f"ws_stood_{entry_idx}"),
-        InlineKeyboardButton("❌ Не отстоял",  callback_data=f"ws_not_{entry_idx}"),
-    )
-    return m
-
-def admin_qr_notify_btn(user_id):
-    """Кнопка для QR-заявки: отправить QR-код пользователю."""
-    m = InlineKeyboardMarkup()
-    m.row(InlineKeyboardButton("📤 Отправить QR-код", callback_data=f"admin_send_qr_{user_id}"))
-    return m
-
-def admin_kod_notify_btn(user_id):
-    """Кнопки для КОД-заявки: запросить код / отмена номера."""
-    m = InlineKeyboardMarkup()
-    m.row(
-        InlineKeyboardButton("🔢 Запросить код",  callback_data=f"admin_req_kod_{user_id}"),
-        InlineKeyboardButton("🚫 Отмена номера",  callback_data=f"admin_cancel_num_{user_id}"),
-    )
-    return m
-
-def admin_kod_result_btn(user_id):
-    """Кнопки после ввода кода пользователем: Отстоял / Не отстоял."""
-    m = InlineKeyboardMarkup()
-    m.row(
-        InlineKeyboardButton("✅ Отстоял",    callback_data=f"stood_{user_id}"),
-        InlineKeyboardButton("❌ Не отстоял", callback_data=f"not_stood_{user_id}"),
-    )
-    return m
-
-def scanned_or_cancel_btn():
-    """Кнопки для пользователя после отправки QR-заявки."""
-    m = InlineKeyboardMarkup()
-    m.row(
-        InlineKeyboardButton("✅ Отсканировал", callback_data="user_scanned"),
-        InlineKeyboardButton("❌ Отмена",        callback_data="cancel_application"),
-    )
-    return m
-
-def queue_mode_choice_btn():
-    """Кнопки выбора режима очереди."""
-    m = InlineKeyboardMarkup()
-    m.row(
-        InlineKeyboardButton("📷 QR-код", callback_data="adm_set_mode_qr"),
-        InlineKeyboardButton("🔢 КОД",   callback_data="adm_set_mode_kod"),
-    )
-    return m
-
-def number_list_entry_btn(user_id, entry_idx):
-    """Кнопка одной записи в списке номеров (номер-@username)."""
-    e   = work_session["entries"][entry_idx]
-    u   = users_db.get(user_id, {})
-    un  = f"@{u['username']}" if u.get("username") else str(user_id)
-    lbl = f"{fmt_phone_display(e['phone'])}-{un}"
-    return InlineKeyboardButton(lbl, callback_data=f"nl_entry_{entry_idx}")
-
-def number_list_detail_btn(entry_idx):
-    """Кнопки внутри записи списка номеров."""
-    m = InlineKeyboardMarkup()
-    m.row(
-        InlineKeyboardButton("✅ Отстоял",    callback_data=f"ws_stood_{entry_idx}"),
-        InlineKeyboardButton("❌ Не отстоял", callback_data=f"ws_not_{entry_idx}"),
-    )
-    m.row(InlineKeyboardButton("◀️ Назад", callback_data="adm_number_list"))
-    return m
-
-# ══════════════════════════════════════════════════════
-#  Вспомогательная функция: завершение обработки
-# ══════════════════════════════════════════════════════
-def _finish_qr_review(target_id, return_to_queue=False):
-    """Завершить обработку заявки.
-    return_to_queue=True — вернуть пользователя в очередь (отклонение / отмена).
-    return_to_queue=False — убрать из очереди навсегда (встал / не встал).
-    """
-    pending.pop(target_id, None)
-    pending_admin_msgs.pop(target_id, None)
-    pending_scan_confirm.pop(target_id, None)
-    pending_kod_request.pop(target_id, None)
-    pending_kod_input.discard(target_id)
-    if return_to_queue:
-        if QUEUE_ENABLED and target_id not in queue:
-            queue.append(target_id)
+def my_referrals_keyboard(has_referrals=False):
+    kb = InlineKeyboardMarkup(row_width=2)
+    if not has_referrals:
+        kb.add(
+            InlineKeyboardButton(" Моя ссылка",   callback_data="copy_ref_link",
+                                 icon_custom_emoji_id=EMOJI_REF_LINK),
+            InlineKeyboardButton(" Главное меню", callback_data="back_to_menu",
+                                 icon_custom_emoji_id=EMOJI_HOME),
+        )
     else:
-        # Заявка завершена — убираем из очереди окончательно
-        if target_id in queue:
-            queue.remove(target_id)
-
-# ══════════════════════════════════════════════════════
-#  Обработка вывода средств
-# ══════════════════════════════════════════════════════
-def _process_withdraw_take(req_id: int, chat_id: int, msg_id: int | None = None):
-    req = withdraw_requests.get(req_id)
-    if not req:
-        bot.send_message(chat_id, f"❌ Заявка #{req_id} не найдена.")
-        return
-    if req["status"] != "pending":
-        bot.send_message(chat_id, f"⚠️ Заявка #{req_id} уже обработана.")
-        return
-
-    amount  = req["amount"]
-    user_id = req["user_id"]
-    check   = cryptobot_create_check(amount)
-    if check is None:
-        bot.send_message(chat_id, f"❌ Ошибка создания чека CryptoBot для заявки #{req_id}.")
-        return
-
-    req["status"]    = "done"
-    check_link       = check.get("bot_check_url") or check.get("check_url") or "—"
-    req["check_url"] = check_link
-
-    u = users_db.get(user_id)
-    if u:
-        for h in reversed(u["history"]):
-            if h["status"] == "Вывод (ожидание)" and h["amount"] == -amount:
-                h["status"] = "Вывод выплачен"
-                break
-
-    try:
-        bot.send_message(
-            user_id,
-            f"╭─────────────────────\n"
-            f"├ ✅ <b>Вывод одобрен!</b>\n"
-            f"├\n"
-            f"├ Сумма: <b>${amount:.2f} USDT</b>\n"
-            f"├ Чек: <b>@CryptoBot</b>\n"
-            f"├\n"
-            f"├ Нажмите кнопку ниже для получения\n"
-            f"╰─────────────────────",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup().row(
-                InlineKeyboardButton("Получить средства", url=check_link)
-            ),
+        kb.add(
+            InlineKeyboardButton(" Пригласить ещё", callback_data="referral",
+                                 icon_custom_emoji_id=EMOJI_INVITE),
+            InlineKeyboardButton(" Главное меню",   callback_data="back_to_menu",
+                                 icon_custom_emoji_id=EMOJI_HOME),
         )
-    except Exception:
-        pass
+    return kb
 
-    ok_text = (
-        f"╭─────────────────────\n"
-        f"├ ✅ <b>Заявка #{req_id} выплачена!</b>\n"
-        f"├\n"
-        f"├ 💸 Чек на <b>${amount:.2f} USDT</b>\n"
-        f"├ 🔗 {check_link}\n"
-        f"╰─────────────────────"
+def support_keyboard():
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton(" Назад", callback_data="back_to_menu",
+                                icon_custom_emoji_id=EMOJI_BACK))
+    return kb
+
+def terms_keyboard():
+    kb = InlineKeyboardMarkup(row_width=2)
+    kb.add(
+        InlineKeyboardButton(" Согласен", callback_data="back_to_menu",
+                             icon_custom_emoji_id=EMOJI_AGREE),
+        InlineKeyboardButton(" Назад",    callback_data="back_to_menu",
+                             icon_custom_emoji_id=EMOJI_BACK),
     )
-    if msg_id:
-        try:
-            bot.edit_message_text(ok_text, chat_id, msg_id, parse_mode="HTML")
-            return
-        except Exception:
-            pass
-    bot.send_message(chat_id, ok_text, parse_mode="HTML")
+    return kb
 
+def balance_keyboard():
+    kb = InlineKeyboardMarkup(row_width=2)
+    for amount in [5, 10, 25, 50]:
+        kb.add(InlineKeyboardButton(
+            f" {amount}$", callback_data=f"deposit_{amount}",
+            icon_custom_emoji_id=EMOJI_DEPOSIT
+        ))
+    kb.add(InlineKeyboardButton(" Другая сумма", callback_data="deposit_custom",
+                                icon_custom_emoji_id=EMOJI_CUSTOM))
+    kb.add(InlineKeyboardButton(" Назад", callback_data="back_to_menu",
+                                icon_custom_emoji_id=EMOJI_BACK))
+    return kb
 
-def _process_withdraw_reject(req_id: int, chat_id: int, msg_id: int | None = None):
-    req = withdraw_requests.get(req_id)
-    if not req:
-        bot.send_message(chat_id, f"❌ Заявка #{req_id} не найдена.")
-        return
-    if req["status"] != "pending":
-        bot.send_message(chat_id, f"⚠️ Заявка #{req_id} уже обработана.")
-        return
+def payment_keyboard(invoice_url: str):
+    kb = InlineKeyboardMarkup(row_width=2)
+    kb.add(
+        InlineKeyboardButton(" Оплатить", url=invoice_url,
+                             icon_custom_emoji_id=EMOJI_PAY),
+        InlineKeyboardButton(" Отмена",   callback_data="cancel_payment",
+                             icon_custom_emoji_id=EMOJI_CANCEL),
+    )
+    return kb
 
-    amount  = req["amount"]
-    user_id = req["user_id"]
-    req["status"] = "rejected"
+def buy_product_keyboard():
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton(" В каталог", callback_data="catalog",
+                                icon_custom_emoji_id=EMOJI_BACK))
+    return kb
 
-    u = get_user(user_id)
-    u["balance"] += amount
-    for h in reversed(u["history"]):
-        if h["status"] == "Вывод (ожидание)" and h["amount"] == -amount:
-            h["status"] = "Вывод отклонён"
-            break
-
-    try:
-        bot.send_message(
-            user_id,
-            f"╭─────────────────────\n"
-            f"├ ❌ <b>Вывод отклонён</b>\n"
-            f"├\n"
-            f"├ Возвращено: <b>${amount:.2f}</b>\n"
-            f'├ Ваш баланс: <b>${u["balance"]:.2f}</b>\n'
-            f"├\n"
-            f"├ Обратитесь в поддержку за деталями\n"
-            f"╰─────────────────────",
-            parse_mode="HTML",
+def confirm_buy_keyboard(product_key: str, quantity: int, insufficient=False):
+    kb = InlineKeyboardMarkup(row_width=2)
+    if insufficient:
+        kb.add(
+            InlineKeyboardButton(" Пополнить баланс", callback_data="balance",
+                                 icon_custom_emoji_id=EMOJI_BALANCE),
+            InlineKeyboardButton(" Каталог",          callback_data="catalog",
+                                 icon_custom_emoji_id=EMOJI_BACK),
         )
-    except Exception:
-        pass
+    else:
+        kb.add(
+            InlineKeyboardButton(" Купить", callback_data=f"confirm_buy_{product_key}_{quantity}",
+                                 icon_custom_emoji_id=EMOJI_BUY),
+            InlineKeyboardButton(" Отмена", callback_data="cancel_buy",
+                                 icon_custom_emoji_id=EMOJI_CANCEL),
+        )
+    return kb
 
-    rej_text = f"╭─────────────────────\n├ ❌ <b>Заявка #{req_id} отклонена.</b>\n╰─────────────────────"
-    if msg_id:
-        try:
-            bot.edit_message_text(rej_text, chat_id, msg_id, parse_mode="HTML")
-            return
-        except Exception:
-            pass
-    bot.send_message(chat_id, rej_text, parse_mode="HTML")
-
-# ══════════════════════════════════════════════════════
-#  Команды
-# ══════════════════════════════════════════════════════
-@bot.message_handler(commands=["getfileid"])
-def cmd_getfileid(message):
-    waiting_for_photo.add(message.from_user.id)
-    bot.send_message(message.chat.id, "Отправь фото — верну <b>file_id</b>", parse_mode="HTML")
-
-
-@bot.message_handler(commands=["on"])
-def cmd_on(message):
-    """Включить ворк (команда для админа)."""
-    if not is_admin(message.from_user.id):
-        return
-    if work_session["active"]:
-        bot.send_message(message.chat.id, "✅ Ворк уже активен.")
-        return
-    work_session["active"]     = True
-    work_session["start_time"] = datetime.datetime.now()
-    work_session["entries"]    = []
-    bot.send_message(message.chat.id, "🟢 <b>Ворк включён!</b> Пользователи уведомлены.", parse_mode="HTML")
-    count = notify_all_users(
-        "╭─────────────────────\n"
-        "├ 🟢 <b>Ворк начался!</b>\n"
-        "├\n"
-        "├ Теперь вы можете сдать номер.\n"
-        "╰─────────────────────"
+def after_buy_keyboard():
+    kb = InlineKeyboardMarkup(row_width=2)
+    kb.add(
+        InlineKeyboardButton(" Поддержка",    callback_data="support",
+                             icon_custom_emoji_id=EMOJI_SUPPORT),
+        InlineKeyboardButton(" Главное меню", callback_data="back_to_menu",
+                             icon_custom_emoji_id=EMOJI_HOME),
     )
-    print(f"[/on] уведомлено {count} пользователей")
+    return kb
 
-
-@bot.message_handler(commands=["off"])
-def cmd_off(message):
-    """Выключить ворк (команда для админа)."""
-    if not is_admin(message.from_user.id):
-        return
-    if not work_session["active"]:
-        bot.send_message(message.chat.id, "🔴 Ворк уже выключен.")
-        return
-    work_session["active"] = False
-    bot.send_message(message.chat.id, "🔴 <b>Ворк выключен!</b> Пользователи уведомлены.", parse_mode="HTML")
-    count = notify_all_users(
-        "╭─────────────────────\n"
-        "├ 🔴 <b>Ворк завершён!</b>\n"
-        "├\n"
-        "├ Приём номеров остановлен.\n"
-        "├ Ожидайте следующего ворка.\n"
-        "╰─────────────────────"
+def cancel_buy_keyboard():
+    kb = InlineKeyboardMarkup(row_width=2)
+    kb.add(
+        InlineKeyboardButton(" Каталог",      callback_data="catalog",
+                             icon_custom_emoji_id=EMOJI_CATALOG),
+        InlineKeyboardButton(" Главное меню", callback_data="back_to_menu",
+                             icon_custom_emoji_id=EMOJI_HOME),
     )
-    print(f"[/off] уведомлено {count} пользователей")
+    return kb
 
+def cancel_payment_keyboard():
+    kb = InlineKeyboardMarkup(row_width=2)
+    kb.add(
+        InlineKeyboardButton(" Баланс",       callback_data="balance",
+                             icon_custom_emoji_id=EMOJI_BALANCE),
+        InlineKeyboardButton(" Главное меню", callback_data="back_to_menu",
+                             icon_custom_emoji_id=EMOJI_HOME),
+    )
+    return kb
 
-@bot.message_handler(commands=["take"])
-def cmd_take(message):
-    if not is_admin(message.from_user.id):
-        return
-    parts = message.text.strip().split()
-    if len(parts) < 2:
-        pl = [f"#{r} — ${withdraw_requests[r]['amount']:.2f}"
-              for r in withdraw_requests
-              if withdraw_requests[r]["status"] == "pending"]
-        if not pl:
-            bot.send_message(message.chat.id, "📭 Нет ожидающих заявок на вывод.")
-        else:
-            bot.send_message(
-                message.chat.id,
-                "╭─────────────────────\n"
-                "├ ⏳ <b>Ожидающие заявки:</b>\n├\n"
-                + "\n".join(f"├ {l}" for l in pl)
-                + "\n╰─────────────────────\n\nИспользуй: <code>/take [номер]</code>",
-                parse_mode="HTML",
-            )
-        return
-    try:
-        req_id = int(parts[1])
-    except ValueError:
-        bot.send_message(message.chat.id, "❌ Укажите числовой номер: <code>/take 4</code>", parse_mode="HTML")
-        return
-    _process_withdraw_take(req_id, message.chat.id)
+def back_to_admin_keyboard():
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton("◀️ Назад", callback_data="admin_panel"))
+    return kb
 
+def back_to_admin_users_keyboard():
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton("◀️ Назад", callback_data="admin_users"))
+    return kb
 
-@bot.message_handler(commands=["reject"])
-def cmd_reject(message):
-    if not is_admin(message.from_user.id):
-        return
-    parts = message.text.strip().split()
-    if len(parts) < 2:
-        bot.send_message(message.chat.id, "❌ Укажите номер: <code>/reject 4</code>", parse_mode="HTML")
-        return
-    try:
-        req_id = int(parts[1])
-    except ValueError:
-        bot.send_message(message.chat.id, "❌ Укажите числовой номер.", parse_mode="HTML")
-        return
-    _process_withdraw_reject(req_id, message.chat.id)
+def application_admin_keyboard(app_user_id: int):
+    """Кнопки Принять/Отклонить для конкретной заявки."""
+    kb = InlineKeyboardMarkup(row_width=2)
+    kb.add(
+        InlineKeyboardButton("✅ Принять",   callback_data=f"app_approve_{app_user_id}"),
+        InlineKeyboardButton("❌ Отклонить", callback_data=f"app_reject_{app_user_id}"),
+    )
+    return kb
 
+def get_display_stock(user_id: int, real_stock: int) -> int:
+    if user_stock_cap.get(user_id, False):
+        return min(real_stock, 24)
+    return real_stock
 
-@bot.message_handler(commands=["takeall"])
-def cmd_takeall(message):
-    if not is_admin(message.from_user.id):
-        return
-    ids = [r for r in withdraw_requests if withdraw_requests[r]["status"] == "pending"]
-    if not ids:
-        bot.send_message(message.chat.id, "📭 Нет ожидающих заявок.")
-        return
-    bot.send_message(message.chat.id, f"⏳ Обрабатываю {len(ids)} заявок...")
-    done = failed = 0
-    for req_id in ids:
-        if cryptobot_create_check(withdraw_requests[req_id]["amount"]):
-            _process_withdraw_take(req_id, message.chat.id)
-            done += 1
-        else:
-            failed += 1
-    bot.send_message(message.chat.id,
-                     f"✅ Принято: <b>{done}</b>  |  ❌ Ошибок: <b>{failed}</b>",
-                     parse_mode="HTML")
+def get_profile_text(user_id: int, username: str = None) -> str:
+    user = get_user(user_id)
+    balance      = round(user["balance"], 2)  if user else 0.0
+    total_bought = user["total_bought"]        if user else 0
+    text  = f"Добро пожаловать, @{username or 'Пользователь'}!\n\n"
+    text += "╭─────────────────\n"
+    text += f'├ <tg-emoji emoji-id="6032693626394382504">🎟</tg-emoji> ID: {user_id}\n'
+    text += f'├ <tg-emoji emoji-id="5904462880941545555">🎟</tg-emoji> Куплено: {total_bought} акков\n'
+    text += f'├ <tg-emoji emoji-id="5258204546391351475">🎟</tg-emoji> Баланс: {balance}$\n'
+    text += "╰─────────────────\n\n"
+    text += " MAX | Главное меню\n"
+    return text
 
+@bot.message_handler(commands=["start"])
+def start_command(message):
+    user_id  = message.from_user.id
+    username = message.from_user.username
+    register_user(user_id, username)
 
-@bot.message_handler(commands=["rejectall"])
-def cmd_rejectall(message):
-    if not is_admin(message.from_user.id):
+    user = get_user(user_id)
+    if user and user["is_banned"]:
         return
-    ids = [r for r in withdraw_requests if withdraw_requests[r]["status"] == "pending"]
-    if not ids:
-        bot.send_message(message.chat.id, "📭 Нет ожидающих заявок.")
-        return
-    for req_id in ids:
-        _process_withdraw_reject(req_id, message.chat.id)
-    bot.send_message(message.chat.id, f"❌ Отклонено: <b>{len(ids)}</b>", parse_mode="HTML")
 
+    args = message.text.split()
+    if len(args) > 1 and args[1].isdigit():
+        referrer_id = int(args[1])
+        if (referrer_id != user_id
+                and get_user(referrer_id) is not None
+                and user and user["referrer_id"] is None):
+            add_referral(referrer_id, user_id)
+
+    send_main_menu(message)
 
 @bot.message_handler(commands=["admin"])
-def cmd_admin(message):
-    if not is_admin(message.from_user.id):
+def admin_command(message):
+    user_id = message.from_user.id
+    if not is_admin(user_id):
+        bot.send_message(user_id, "⛔ Нет доступа!")
         return
-    work_status = "🟢 Ворк активен" if work_session["active"] else "🔴 Ворк не активен"
-    bot.send_message(
-        message.chat.id,
-        f"╭─────────────────────\n"
-        f"├ <b>{em(EMOJI_ADMIN,'👑')} Панель администратора</b>\n"
-        f"├\n"
-        f"├ Выплата за номер: <b>${settings['payout']:.2f}</b>\n"
-        f"├ Пользователей: <b>{len(users_db)}</b>\n"
-        f"├ Администраторов: <b>{len(ADMIN_IDS)}</b>\n"
-        f"├ {work_status}\n"
-        f"├ Номеров в сессии: <b>{len(work_session['entries'])}</b>\n"
-        f"╰─────────────────────",
-        parse_mode="HTML",
-        reply_markup=admin_panel_menu(),
+    text = ("👑 АДМИН ПАНЕЛЬ | MAX\n\n━━━━━━━━━━━━━━━\n\n"
+            "1 — 📦 Товары\n2 — 👥 Пользователи\n"
+            "3 — 💰 Пополнения\n4 — 📢 Рассылка\n"
+            "5 — 📊 Статистика\n6 — ⚠️ Бан\n"
+            "7 — 📋 Заявки\n\n━━━━━━━━━━━━━━━")
+    bot.send_message(user_id, text, reply_markup=admin_keyboard())
+
+@bot.message_handler(commands=["tall"])
+def tall_command(message):
+    """Принять все ожидающие заявки."""
+    user_id = message.from_user.id
+    if not is_admin(user_id):
+        bot.send_message(user_id, "⛔ Нет доступа!")
+        return
+    apps = get_pending_applications()
+    if not apps:
+        bot.send_message(user_id, "📋 Нет ожидающих заявок.")
+        return
+    count = 0
+    for app in apps:
+        uid = app["user_id"]
+        set_application_status(uid, "approved")
+        set_approved(uid, True)
+        count += 1
+        try:
+            bot.send_message(uid,
+                "✅ Ваша заявка одобрена!\n\n"
+                "Добро пожаловать! Теперь у вас есть полный доступ к боту.")
+        except:
+            pass
+    bot.send_message(user_id, f"✅ Принято заявок: {count}")
+
+@bot.message_handler(commands=["call"])
+def call_command(message):
+    """Отклонить все ожидающие заявки."""
+    user_id = message.from_user.id
+    if not is_admin(user_id):
+        bot.send_message(user_id, "⛔ Нет доступа!")
+        return
+    apps = get_pending_applications()
+    if not apps:
+        bot.send_message(user_id, "📋 Нет ожидающих заявок.")
+        return
+    count = 0
+    for app in apps:
+        uid = app["user_id"]
+        set_application_status(uid, "rejected")
+        count += 1
+        try:
+            bot.send_message(uid,
+                "❌ Ваша заявка отклонена.\n\n"
+                "Обратитесь в поддержку для уточнения причины.")
+        except:
+            pass
+    bot.send_message(user_id, f"❌ Отклонено заявок: {count}")
+
+@bot.message_handler(commands=["showb"])
+def showb_command(message):
+    user_id = message.from_user.id
+    if not is_admin(user_id):
+        bot.send_message(user_id, "⛔ Нет доступа!")
+        return
+
+    users     = get_all_users()
+    purchases = get_all_purchases()
+
+    total_balance = round(sum(u["balance"] for u in users), 2)
+    total_purchases_amount = round(sum(p["amount"] for p in purchases), 2)
+
+    deposit_stats = {}
+    for p in purchases:
+        uid = p["user_id"]
+        deposit_stats[uid] = deposit_stats.get(uid, 0) + p["amount"]
+
+    top_depositors = sorted(deposit_stats.items(), key=lambda x: x[1], reverse=True)[:5]
+    users_with_balance = sum(1 for u in users if u["balance"] > 0)
+
+    text = (
+        "💰 ОБЩИЙ БАЛАНС И СТАТИСТИКА ПОПОЛНЕНИЙ\n\n"
+        "━━━━━━━━━━━━━━━\n\n"
+        f"👥 Всего пользователей: {len(users)}\n"
+        f"💵 Пользователей с балансом: {users_with_balance}\n"
+        f"💰 Суммарный баланс всех юзеров: {total_balance}$\n"
+        f"📦 Всего покупок: {len(purchases)}\n"
+        f"📈 Общий оборот (покупки): {total_purchases_amount}$\n\n"
+        "━━━━━━━━━━━━━━━\n\n"
+        "🏆 ТОП-5 ПОКУПАТЕЛЕЙ:\n"
     )
 
-
-@bot.message_handler(commands=["start", "menu"])
-def start(message):
-    uid  = message.from_user.id
-    user = get_user(uid)
-    user["username"]   = message.from_user.username or ""
-    user["first_name"] = message.from_user.first_name or ""
-    if user.get("banned"):
-        bot.send_message(message.chat.id, "🚫 Вы заблокированы.")
-        return
-    text = welcome_text(message.from_user, user)
-    if BANNER_FILE_ID:
-        bot.send_photo(message.chat.id, BANNER_FILE_ID,
-                       caption=text, parse_mode="HTML", reply_markup=main_menu())
-    else:
-        bot.send_message(message.chat.id, text, parse_mode="HTML", reply_markup=main_menu())
-
-# ══════════════════════════════════════════════════════
-#  Обработчики медиа
-# ══════════════════════════════════════════════════════
-@bot.message_handler(content_types=["photo"])
-def handle_photo(message):
-    uid = message.from_user.id
-
-    if uid in waiting_for_photo:
-        waiting_for_photo.discard(uid)
-        file_id = message.photo[-1].file_id
-        bot.send_message(message.chat.id,
-                         f"✅ <b>file_id</b>:\n\n<code>{file_id}</code>",
-                         parse_mode="HTML")
-        return
-
-    # ── Админ отправляет QR-код пользователю ──
-    if is_admin(uid) and uid in admin_states:
-        state = admin_states[uid]
-        if state.get("action") == "send_qr_photo":
-            target_id = state["target"]
-            del admin_states[uid]
-            file_id = message.photo[-1].file_id
-
-            pending_scan_confirm[target_id] = True
-
-            # Отправить QR пользователю
-            try:
-                bot.send_photo(
-                    target_id,
-                    file_id,
-                    caption=(
-                        f"╭─────────────────────\n"
-                        f"├ <b>📷 Ваш QR-код</b>\n"
-                        f"├\n"
-                        f"├ Отсканируйте QR-код и нажмите кнопку ниже.\n"
-                        f"╰─────────────────────"
-                    ),
-                    parse_mode="HTML",
-                    reply_markup=scanned_or_cancel_btn(),
-                )
-                bot.send_message(message.chat.id, f"✅ QR-код отправлен пользователю <code>{target_id}</code>", parse_mode="HTML")
-            except Exception as e:
-                bot.send_message(message.chat.id, f"❌ Ошибка отправки: {e}")
-            return
-
-    if uid in waiting_for_qr:
-        waiting_for_qr.discard(uid)
-        file_id = message.photo[-1].file_id
-        get_user(uid)["_pending_qr"] = file_id
-        bot.send_photo(
-            message.chat.id,
-            file_id,
-            caption=(
-                f"╭─────────────────────\n"
-                f"├ <b>📷 QR-код получен!</b>\n"
-                f"├\n"
-                f"├ Проверьте фото и нажмите\n"
-                f"├ <b>«Отправить заявку»</b>\n"
-                f"╰─────────────────────"
-            ),
-            parse_mode="HTML",
-            reply_markup=send_qr_btn(),
-        )
-
-# ══════════════════════════════════════════════════════
-#  Обработчик текста (состояния пользователя + админа)
-# ══════════════════════════════════════════════════════
-@bot.message_handler(content_types=["text"])
-def handle_text(message):
-    uid  = message.from_user.id
-    text = message.text.strip()
-
-    # ── Ввод номера телефона ──
-    if user_states.get(uid) == "waiting_phone":
-        phone = format_phone(text)
-        if not is_valid_phone(phone):
-            bot.send_message(
-                message.chat.id,
-                "╭─────────────────────\n"
-                "├ ❌ <b>Неверный формат номера</b>\n"
-                "├\n"
-                "├ Введите номер в формате:\n"
-                "├ <code>+79001234567</code>\n"
-                "╰─────────────────────",
-                parse_mode="HTML",
-            )
-            return
-        # Сохраняем номер и спрашиваем формат
-        get_user(uid)["_pending_phone"] = phone
-        user_states[uid] = "waiting_format"
-        bot.send_message(
-            message.chat.id,
-            f"╭─────────────────────\n"
-            f"├ 📱 Номер: <code>{esc(phone)}</code>\n"
-            f"├\n"
-            f"├ Выберите формат сдачи:\n"
-            f"╰─────────────────────",
-            parse_mode="HTML",
-            reply_markup=format_choice_menu(),
-        )
-        return
-
-    # ── Ввод 6-значного кода пользователем ──
-    if uid in pending_kod_input:
-        pending_kod_input.discard(uid)
-        req = pending_kod_request.get(uid)
-        if not req:
-            return
-        phone = req.get("phone", "")
-        kod   = text.strip()
-
-        # Уведомить всех админов с кнопками «Отстоял / Не отстоял»
-        notify_all_admins(
-            f"╭─────────────────────\n"
-            f"├ <b>🔢 Код от пользователя</b>\n"
-            f"├\n"
-            f"├ ID: <code>{uid}</code>\n"
-            f"├ Номер: <code>{esc(fmt_phone_display(phone))}</code>\n"
-            f"├ Код: <b>{esc(kod)}</b>\n"
-            f"╰─────────────────────",
-            markup=admin_kod_result_btn(uid),
-        )
-
-        bot.send_message(
-            message.chat.id,
-            f"╭─────────────────────\n"
-            f"├ ✅ <b>Код отправлен!</b>\n"
-            f"├\n"
-            f"├ Ожидайте результата от администратора.\n"
-            f"╰─────────────────────",
-            parse_mode="HTML",
-        )
-
-        # Через 15 секунд освобождаем очередь
-        def _release_after_kod(user_id):
-            time.sleep(15)
-            if user_id in pending:
-                _finish_qr_review(user_id, return_to_queue=False)
-                try:
-                    bot.send_message(
-                        user_id,
-                        "╭─────────────────────\n"
-                        "├ ⏳ <b>Ваше место в очереди освобождено</b>\n"
-                        "├\n"
-                        "├ Обработка завершена автоматически.\n"
-                        "╰─────────────────────",
-                        parse_mode="HTML",
-                    )
-                except Exception:
-                    pass
-
-        threading.Thread(target=_release_after_kod, args=(uid,), daemon=True).start()
-        return
-
-    # ── Ввод суммы вывода ──
-    if user_states.get(uid) == "waiting_withdraw_amount":
-        del user_states[uid]
-        raw = text.replace(",", ".")
-        try:
-            amount = float(raw)
-        except ValueError:
-            bot.send_message(
-                message.chat.id,
-                "╭─────────────────────\n"
-                "├ ❌ <b>Некорректная сумма</b>\n"
-                "├ Введите число, например: <code>5.00</code>\n"
-                "╰─────────────────────",
-                parse_mode="HTML",
-                reply_markup=back_btn("balance"),
-            )
-            return
+    for i, (uid, amount) in enumerate(top_depositors, 1):
         u = get_user(uid)
-        if amount < 1.0:
-            bot.send_message(
-                message.chat.id,
-                "╭─────────────────────\n"
-                "├ ❌ <b>Минимальная сумма вывода — $1.00</b>\n"
-                "╰─────────────────────",
-                parse_mode="HTML",
-                reply_markup=back_btn("balance"),
-            )
-            return
-        if amount > u["balance"]:
-            bot.send_message(
-                message.chat.id,
-                f"╭─────────────────────\n"
-                f"├ ❌ <b>Недостаточно средств</b>\n"
-                f'├ Доступно: <b>${u["balance"]:.2f}</b>\n'
-                f"╰─────────────────────",
-                parse_mode="HTML",
-                reply_markup=back_btn("balance"),
-            )
-            return
-        bot.send_message(
-            message.chat.id,
-            withdraw_confirm_text(amount, u),
-            parse_mode="HTML",
-            reply_markup=withdraw_confirm_btn(amount),
-        )
-        return
+        uname = f"@{u['username']}" if u and u["username"] else f"ID{uid}"
+        text += f"{i}. {uname} — {round(amount, 2)}$\n"
 
-    if uid not in admin_states:
-        return
+    if not top_depositors:
+        text += "Пока нет данных\n"
 
-    state  = admin_states[uid]
-    action = state.get("action")
+    text += "\n━━━━━━━━━━━━━━━"
+    bot.send_message(user_id, text)
 
-    # ── Рассылка ──
-    if action == "broadcast":
-        del admin_states[uid]
-        count = 0
-        for u_id in list(users_db.keys()):
-            try:
-                bot.send_message(u_id,
-                                 f"<b>Сообщение от администратора:</b>\n\n{text}",
-                                 parse_mode="HTML")
-                count += 1
-            except Exception:
-                pass
-        bot.send_message(message.chat.id,
-                         f"✅ Рассылка отправлена <b>{count}</b> пользователям.",
-                         parse_mode="HTML")
-
-    # ── Проверка пользователя ──
-    elif action == "check_user":
-        del admin_states[uid]
-        try:
-            target_id = int(text)
-        except ValueError:
-            bot.send_message(message.chat.id, "❌ Введите числовой ID")
-            return
-        u = users_db.get(target_id)
-        if not u:
-            bot.send_message(message.chat.id, "❌ Пользователь не найден")
-            return
-        in_q  = target_id in queue
-        q_pos = f"Да (позиция {queue.index(target_id)+1})" if in_q else "Нет"
-        bot.send_message(
-            message.chat.id,
-            f"╭─────────────────────\n"
-            f"├ 👤 <b>Пользователь {target_id}</b>\n"
-            f"├\n"
-            f"├ 📛 Имя: {esc(u['first_name'])}\n"
-            f"├ 🔗 Username: {'@'+esc(u['username']) if u['username'] else '—'}\n"
-            f"├ 💰 Баланс: <b>${u['balance']:.2f}</b>\n"
-            f"├ 📦 Сдано: <b>{u['numbers_rented']}</b>\n"
-            f"├ 🔄 В очереди: {q_pos}\n"
-            f"├ ⏳ На проверке: {'Да' if target_id in pending else 'Нет'}\n"
-            f"├ 🚫 Бан: {'Да' if u.get('banned') else 'Нет'}\n"
-            f"╰─────────────────────",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup().row(
-                InlineKeyboardButton(
-                    "🚫 Забанить" if not u.get("banned") else "✅ Разбанить",
-                    callback_data=f"adm_ban_{target_id}",
-                )
-            ),
-        )
-
-    elif action == "give_step1":
-        try:
-            admin_states[uid] = {"action": "give_step2", "target": int(text)}
-            bot.send_message(message.chat.id, "💵 Введите сумму (например: 10):")
-        except ValueError:
-            bot.send_message(message.chat.id, "❌ Введите числовой ID")
-            del admin_states[uid]
-
-    elif action == "give_step2":
-        try:
-            amount    = float(text)
-            target_id = state["target"]
-            u         = get_user(target_id)
-            u["balance"] += amount
-            u["history"].append({
-                "date":   datetime.date.today().strftime("%d.%m"),
-                "amount": amount, "status": "Пополнение",
-            })
-            del admin_states[uid]
-            bot.send_message(
-                message.chat.id,
-                f"✅ Начислено <b>${amount:.2f}</b> пользователю <code>{target_id}</code>",
-                parse_mode="HTML",
-            )
-            try:
-                bot.send_message(target_id, f"💰 На ваш баланс начислено <b>${amount:.2f}</b>!", parse_mode="HTML")
-            except Exception:
-                pass
-        except ValueError:
-            bot.send_message(message.chat.id, "❌ Введите корректную сумму")
-            del admin_states[uid]
-
-    elif action == "take_step1":
-        try:
-            admin_states[uid] = {"action": "take_step2", "target": int(text)}
-            bot.send_message(message.chat.id, "💸 Введите сумму для списания:")
-        except ValueError:
-            bot.send_message(message.chat.id, "❌ Введите числовой ID")
-            del admin_states[uid]
-
-    elif action == "take_step2":
-        try:
-            amount    = float(text)
-            target_id = state["target"]
-            u         = get_user(target_id)
-            u["balance"] = max(0, u["balance"] - amount)
-            u["history"].append({
-                "date":   datetime.date.today().strftime("%d.%m"),
-                "amount": -amount, "status": "Списание",
-            })
-            del admin_states[uid]
-            bot.send_message(
-                message.chat.id,
-                f"✅ Списано <b>${amount:.2f}</b> у пользователя <code>{target_id}</code>",
-                parse_mode="HTML",
-            )
-        except ValueError:
-            bot.send_message(message.chat.id, "❌ Введите корректную сумму")
-            del admin_states[uid]
-
-    elif action == "set_payout":
-        try:
-            amount             = float(text)
-            settings["payout"] = amount
-            del admin_states[uid]
-            bot.send_message(
-                message.chat.id,
-                f"✅ Выплата за номер изменена на <b>${amount:.2f}</b>",
-                parse_mode="HTML",
-            )
-        except ValueError:
-            bot.send_message(message.chat.id, "❌ Введите корректную сумму")
-            del admin_states[uid]
-
-    elif action == "reject_reason":
-        target_id = state["target"]
-        reason    = text
-        del admin_states[uid]
-
-        for (achat, amsg) in pending_admin_msgs.get(target_id, []):
-            try:
-                bot.edit_message_caption(
-                    caption=f"❌ <b>ОТКЛОНЕНО</b>\n📝 Причина: {esc(reason)}",
-                    chat_id=achat, message_id=amsg, parse_mode="HTML",
-                )
-            except Exception:
-                pass
-
-        _finish_qr_review(target_id, return_to_queue=True)
-
-        try:
-            bot.send_message(
-                target_id,
-                f"╭─────────────────────\n"
-                f"├ ❌ <b>Ваша заявка отклонена</b>\n"
-                f"├\n"
-                f"├ 📝 Причина: {esc(reason)}\n"
-                f"├\n"
-                f"├ Вы добавлены обратно в очередь.\n"
-                f"╰─────────────────────",
-                parse_mode="HTML",
-            )
-        except Exception:
-            pass
-        bot.send_message(message.chat.id, "✅ Заявка отклонена, пользователь уведомлён.")
-
-# ══════════════════════════════════════════════════════
-#  Обработчик callback-кнопок
-# ══════════════════════════════════════════════════════
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
-    bot.answer_callback_query(call.id)
-    uid     = call.from_user.id
-    chat_id = call.message.chat.id
-    msg_id  = call.message.message_id
-    data    = call.data
-    user    = get_user(uid)
+    user_id    = call.from_user.id
+    username   = call.from_user.username
+    message_id = call.message.message_id
+    chat_id    = call.message.chat.id
+    data       = call.data
 
-    def edit(text, markup=None):
-        try:
-            if call.message.photo:
-                bot.edit_message_caption(caption=text, chat_id=chat_id,
-                                         message_id=msg_id,
-                                         parse_mode="HTML", reply_markup=markup)
-            else:
-                bot.edit_message_text(text, chat_id, msg_id,
-                                      parse_mode="HTML", reply_markup=markup)
-        except Exception as e:
-            print(f"[edit] {e}")
+    user = get_user(user_id)
+    if user and user["is_banned"]:
+        bot.answer_callback_query(call.id)
+        return
+
+    if data == "send_application":
+        if is_approved(user_id):
+            bot.answer_callback_query(call.id, "✅ У вас уже есть доступ!", show_alert=True)
+            return
+        created = create_application(user_id, username)
+        if created:
             try:
-                bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=markup)
-            except Exception as e2:
-                print(f"[edit fallback] {e2}")
-
-    # ── Назад в меню ──
-    if data == "back_menu":
-        user_states.pop(uid, None)
-        text = welcome_text(call.from_user, user)
-        try:
-            if BANNER_FILE_ID:
-                bot.edit_message_media(
-                    InputMediaPhoto(BANNER_FILE_ID, caption=text, parse_mode="HTML"),
-                    chat_id, msg_id, reply_markup=main_menu(),
+                bot.edit_message_text(
+                    "✅ Ваша заявка отправлена на проверку администрации.\n\n"
+                    "📄 Изучите оферту: https://graph.org/PRAVILA-05-12-296",
+                    chat_id=chat_id, message_id=message_id,
+                    reply_markup=oferta_keyboard()
                 )
-            else:
-                edit(text, main_menu())
-        except Exception:
-            edit(text, main_menu())
+            except:
+                bot.send_message(user_id,
+                    "✅ Ваша заявка отправлена на проверку администрации.\n\n"
+                    "📄 Изучите оферту: https://graph.org/PRAVILA-05-12-296",
+                    reply_markup=oferta_keyboard())
+            notify_admins_about_application(user_id, username)
+        else:
+            bot.answer_callback_query(call.id,
+                "⏳ Ваша заявка уже отправлена, ожидайте ответа.", show_alert=True)
+        bot.answer_callback_query(call.id)
+        return
 
-    elif data == "rules":
-        edit(rules_text(), back_btn())
+    if data == "oferta_acknowledged":
+        try:
+            bot.edit_message_text(
+                "⏳ Ожидайте — мы уведомим вас о решении.",
+                chat_id=chat_id, message_id=message_id, reply_markup=None
+            )
+        except:
+            bot.send_message(user_id, "⏳ Ожидайте — мы уведомим вас о решении.")
+        bot.answer_callback_query(call.id)
+        return
+
+    if data.startswith("app_approve_"):
+        if not is_admin(user_id):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        target_id = int(data[len("app_approve_"):])
+        set_application_status(target_id, "approved")
+        set_approved(target_id, True)
+        target = get_user(target_id)
+        uname = f"@{target['username']}" if target and target["username"] else f"ID{target_id}"
+        try:
+            bot.edit_message_reply_markup(chat_id=chat_id, message_id=message_id, reply_markup=None)
+            bot.edit_message_text(
+                f"✅ Заявка от {uname} — ПРИНЯТА",
+                chat_id=chat_id, message_id=message_id
+            )
+        except:
+            bot.send_message(chat_id, f"✅ Заявка от {uname} принята.")
+        try:
+            bot.send_message(target_id,
+                "✅ Ваша заявка одобрена!\n\n"
+                "Добро пожаловать! Теперь у вас есть полный доступ к боту.")
+        except:
+            pass
+        bot.answer_callback_query(call.id, "✅ Принято!")
+        return
+
+    if data.startswith("app_reject_"):
+        if not is_admin(user_id):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        target_id = int(data[len("app_reject_"):])
+        set_application_status(target_id, "rejected")
+        target = get_user(target_id)
+        uname = f"@{target['username']}" if target and target["username"] else f"ID{target_id}"
+        try:
+            bot.edit_message_text(
+                f"❌ Заявка от {uname} — ОТКЛОНЕНА",
+                chat_id=chat_id, message_id=message_id, reply_markup=None
+            )
+        except:
+            bot.send_message(chat_id, f"❌ Заявка от {uname} отклонена.")
+        try:
+            bot.send_message(target_id,
+                "❌ Ваша заявка отклонена.\n\n"
+                "Обратитесь в поддержку для уточнения причины.")
+        except:
+            pass
+        bot.answer_callback_query(call.id, "❌ Отклонено!")
+        return
+
+    if not is_approved(user_id):
+        bot.answer_callback_query(call.id,
+            "⛔ У вас нет доступа. Подайте заявку.", show_alert=True)
+        return
+
+    if data == "back_to_menu":
+        user_states.pop(user_id, None)
+        edit_message(chat_id, message_id,
+                     get_profile_text(user_id, username),
+                     main_menu_keyboard(user_id))
+        bot.answer_callback_query(call.id)
+
+    elif data == "catalog":
+        products = get_all_products()
+        text = "📦 КАТАЛОГ\n\n"
+        for key, p in products.items():
+            display_stock = get_display_stock(user_id, p["stock"])
+            stock_text = f"{display_stock} шт" if display_stock > 0 else "❌ Нет в наличии"
+            text += f"{p['emoji']} {p['name']} ({stock_text} | {p['price']}$)\n"
+            text += f"   └ {p['description']}\n\n"
+        text += "━━━━━━━━━━━━━━━\n\nНажмите на товар:"
+        edit_message(chat_id, message_id, text, catalog_keyboard())
+        bot.answer_callback_query(call.id)
+
+    elif data == "referral":
+        u            = get_user(user_id)
+        bot_username = bot.get_me().username
+        ref_link     = f"https://t.me/{bot_username}?start={user_id}"
+        refs         = get_referrals(user_id)
+        ref_earn     = u["referral_earnings"] if u else 0
+        bal          = u["balance"] if u else 0
+        text  = '<tg-emoji emoji-id="5258513401784573443">🎟</tg-emoji> РЕФЕРАЛЬНАЯ ПРОГРАММА\n\n'
+        text += f"Ваша реферальная ссылка:\n<code>{ref_link}</code>\n\n"
+        text += "━━━━━━━━━━━━━━━\n\n"
+        text += f'<tg-emoji emoji-id="5258513401784573443">🎟</tg-emoji> Приглашено: {len(refs)}\n'
+        text += f'<tg-emoji emoji-id="5890848474563352982">🎟</tg-emoji> Заработано: {ref_earn}$\n'
+        text += f'<tg-emoji emoji-id="5258204546391351475">🎟</tg-emoji> Баланс: {round(bal,2)}$\n\n'
+        text += "━━━━━━━━━━━━━━━\n\n За каждую покупку реферала вы получаете 10%."
+        edit_message(chat_id, message_id, text, referral_keyboard())
+        bot.answer_callback_query(call.id)
+
+    elif data == "my_referrals":
+        refs = get_referrals(user_id)
+        if not refs:
+            edit_message(chat_id, message_id,
+                         " МОИ РЕФЕРАЛЫ\n\n👥 Пока никого нет\n\nПригласите друзей!",
+                         my_referrals_keyboard(False))
+        else:
+            text = " МОИ РЕФЕРАЛЫ\n\n"
+            for i, row in enumerate(refs[:10], 1):
+                rid       = row["referral_id"]
+                purchases = get_user_purchases(rid)
+                spent     = sum(p["amount"] for p in purchases)
+                bonus     = round(spent * 0.1, 2)
+                ru        = get_user(rid)
+                rname     = ru["username"] if ru and ru["username"] else f"ID{rid}"
+                text += f"{i}. @{rname} — {len(purchases)} покупок | бонус: {bonus}$\n"
+            text += f"\n━━━━━━━━━━━━━━━\n👥 Всего: {len(refs)}"
+            edit_message(chat_id, message_id, text, my_referrals_keyboard(True))
+        bot.answer_callback_query(call.id)
+
+    elif data == "copy_ref_link":
+        bot_username = bot.get_me().username
+        ref_link = f"https://t.me/{bot_username}?start={user_id}"
+        bot.answer_callback_query(call.id, f"Ссылка: {ref_link}", show_alert=True)
+
+    elif data == "support":
+        edit_message(chat_id, message_id,
+                     " ПОДДЕРЖКА\n\nСвяжитесь с нами: @Qadwero",
+                     support_keyboard())
+        bot.answer_callback_query(call.id)
+
+    elif data == "terms":
+        text = """📜 ПРАВИЛА И ОФЕРТА
+
+1️⃣ Токены НЕ хранятся заранее
+Берутся ТОЛЬКО в момент покупки. Сохраните их сразу.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+2️⃣ Запрещено использовать аккаунты для мошенничества
+• Не использовать для обмана / фишинга / спама
+• Не нарушать законы вашей страны
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+3️⃣ Замена авторегов в течение 5 часов
+Если оказался нерабочим — замена при наличии скриншота ошибки.
+Web Token и JSON замене не подлежат если были рабочими.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+4️⃣ Возврат денег не предусмотрен. Все товары — цифровые.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+5️⃣ Конфиденциальность
+Ваши данные не передаются третьим лицам.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+6️⃣ Минимальный возраст: 18 лет.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+7️⃣ Продолжая использовать бота вы соглашаетесь со всеми правилами."""
+        edit_message(chat_id, message_id, text, terms_keyboard())
+        bot.answer_callback_query(call.id)
 
     elif data == "balance":
-        user_states.pop(uid, None)
-        edit(balance_text(user), balance_menu())
+        bal  = get_user_balance(user_id)
+        text = f" ВАШ БАЛАНС\n\nТекущий баланс: {bal}$\n\nВыберите сумму для пополнения:"
+        edit_message(chat_id, message_id, text, balance_keyboard())
+        bot.answer_callback_query(call.id)
 
-    elif data == "history":
-        edit(history_text(user), back_btn())
+    elif data.startswith("buy_"):
+        product_key = data[4:]
+        product = get_product(product_key)
+        if not product:
+            bot.answer_callback_query(call.id, "Товар не найден", show_alert=True)
+            return
+        display_stock = get_display_stock(user_id, product["stock"])
+        if display_stock <= 0:
+            bot.answer_callback_query(call.id, "❌ Товар закончился!", show_alert=True)
+            return
+        items = get_all_items(product_key)
+        if not items:
+            bot.answer_callback_query(call.id, "❌ Контент для этого товара ещё не добавлен!", show_alert=True)
+            return
+        bal     = get_user_balance(user_id)
+        max_qty = display_stock
+        text = (f"{product['emoji']} {product['name']} | {product['price']}$ за шт\n\n"
+                f"📦 В наличии: {display_stock} шт\n"
+                f" Ваш баланс: {bal}$\n\n"
+                f"━━━━━━━━━━━━━━━\n\n"
+                f"Введите количество (мин. 15):\n➡️ Например: 15")
+        edit_message(chat_id, message_id, text, buy_product_keyboard())
+        bot.answer_callback_query(call.id)
+        user_states[user_id] = {
+            "awaiting_quantity": True,
+            "product_key": product_key,
+            "chat_id": chat_id,
+            "message_id": message_id
+        }
 
-    elif data == "statistics":
-        edit(statistics_text(), back_btn())
-
-    # ── Сдать номер ──
-    elif data == "submit_number":
-        if user.get("banned"):
-            bot.answer_callback_query(call.id, "🚫 Вы заблокированы!", show_alert=True)
+    elif data.startswith("confirm_buy_"):
+        rest        = data[len("confirm_buy_"):]
+        last_sep    = rest.rfind("_")
+        product_key = rest[:last_sep]
+        quantity    = int(rest[last_sep + 1:])
+        product     = get_product(product_key)
+        if not product:
+            bot.answer_callback_query(call.id, "Товар не найден", show_alert=True)
+            return
+        total_price = round(product["price"] * quantity, 2)
+        bal         = get_user_balance(user_id)
+        if bal < total_price:
+            bot.answer_callback_query(call.id, "❌ Недостаточно средств!", show_alert=True)
+            return
+        if product["stock"] < quantity:
+            bot.answer_callback_query(call.id, f"❌ В наличии только {product['stock']} шт!", show_alert=True)
             return
 
-        # Проверяем ворк
-        if not work_session["active"]:
-            edit(
-                "╭─────────────────────\n"
-                "├ 🔴 <b>Ворк не активен</b>\n"
-                "├\n"
-                "├ Сдача номеров сейчас не принимается.\n"
-                "├ Ожидайте уведомления о начале ворка.\n"
-                "╰─────────────────────",
-                back_btn(),
-            )
+        # Получаем весь фиксированный набор текстов товара
+        items = get_all_items(product_key)
+        if not items:
+            bot.answer_callback_query(call.id, "❌ Контент товара не настроен! Обратитесь в поддержку.", show_alert=True)
             return
 
-        # Заявка уже на проверке
-        if uid in pending:
-            edit(
-                "╭─────────────────────\n"
-                "├ ⏳ <b>Заявка на проверке</b>\n"
-                "├\n"
-                "├ Ваша заявка уже отправлена администратору.\n"
-                "├ Дождитесь решения или отмените заявку.\n"
-                "╰─────────────────────",
-                pending_menu(),
-            )
+        if not deduct_balance(user_id, total_price):
+            bot.answer_callback_query(call.id, "❌ Ошибка списания!", show_alert=True)
             return
 
-        # Очередь
-        if QUEUE_ENABLED:
-            if uid not in queue:
-                queue.append(uid)
-            pos = queue.index(uid) + 1
-            if pos > 1:
-                edit(queue_text(pos), back_btn())
-                return
+        # Уменьшаем stock
+        update_product_field(product_key, "stock", product["stock"] - quantity)
+        add_purchase(user_id, product_key, quantity, total_price)
 
-        # Запрашиваем номер телефона
-        user_states[uid] = "waiting_phone"
-        edit(submit_price_text(), back_btn())
+        u = get_user(user_id)
+        referrer_id = u["referrer_id"] if u else None
+        if referrer_id:
+            bonus = round(total_price * 0.1, 2)
+            add_referral_earning(referrer_id, bonus)
+            try:
+                bot.send_message(int(referrer_id),
+                    f"🎁 Ваш реферал купил {product['name']} x{quantity}!\n💰 Начислено: +{bonus}$")
+            except:
+                pass
 
-    # ── Выбор формата ──
-    elif data in ("fmt_qr", "fmt_kod"):
-        if user_states.get(uid) != "waiting_format":
-            return
-        phone = user.get("_pending_phone", "")
-        if not phone:
-            edit("❌ Ошибка: номер не найден. Попробуйте снова.", back_btn())
-            return
-        user["_pending_format"] = "qr" if data == "fmt_qr" else "kod"
-        user_states.pop(uid, None)
+        for aid in ADMIN_IDS:
+            # Не отправляем уведомление если админ находится в режиме UDV
+            if is_udv_mode_enabled(aid):
+                continue
+            try:
+                bot.send_message(aid,
+                    f"🛒 НОВАЯ ПОКУПКА!\n\n👤 ID{user_id} @{username}\n"
+                    f"📦 {product['emoji']} {product['name']} x{quantity}\n💰 Сумма: {total_price}$")
+            except:
+                pass
 
-        if data == "fmt_qr":
-            # ── QR: сообщаем пользователю, уведомляем админа ──
-            if uid in queue:
-                queue.remove(uid)
-            pending[uid] = msg_id
-
-            entry = {
-                "user_id": uid,
-                "phone":   phone,
-                "format":  "qr",
-                "ts":      datetime.datetime.now(),
-                "result":  None,
-            }
-            work_session["entries"].append(entry)
-
-            name     = esc(call.from_user.first_name or "—")
-            username = f"@{esc(call.from_user.username)}" if call.from_user.username else "—"
-            admin_text = (
-                f"╭─────────────────────\n"
-                f"├ <b>📷 Новая QR-заявка</b>\n"
-                f"├\n"
-                f"├ Имя: {name}\n"
-                f"├ Username: {username}\n"
-                f"├ ID: <code>{uid}</code>\n"
-                f"├ Номер: <code>{esc(phone)}</code>\n"
-                f"├ Дата: {datetime.date.today().strftime('%d.%m.%Y')}\n"
-                f"├ Выплата: <b>${settings['payout']:.2f}</b>\n"
-                f"╰─────────────────────"
-            )
-            sent = notify_all_admins(text=admin_text, markup=admin_qr_notify_btn(uid))
-            pending_admin_msgs[uid] = sent
-
-            edit(
-                f"╭─────────────────────\n"
-                f"├ <b>📷 QR-код выбран</b>\n"
-                f"├\n"
-                f"├ Номер: <code>{esc(phone)}</code>\n"
-                f"├\n"
-                f"├ ⏳ В течении <b>2 минут</b> администратор\n"
-                f"├ пришлёт вам QR-код.\n"
-                f"├ Пожалуйста, ожидайте.\n"
-                f"╰─────────────────────",
-                back_btn("cancel_application"),
-            )
-
-        else:
-            # ── КОД: сообщаем пользователю, уведомляем админа ──
-            if uid in queue:
-                queue.remove(uid)
-            pending[uid] = msg_id
-
-            entry = {
-                "user_id": uid,
-                "phone":   phone,
-                "format":  "kod",
-                "ts":      datetime.datetime.now(),
-                "result":  None,
-            }
-            work_session["entries"].append(entry)
-
-            name     = esc(call.from_user.first_name or "—")
-            username = f"@{esc(call.from_user.username)}" if call.from_user.username else "—"
-            admin_text = (
-                f"╭─────────────────────\n"
-                f"├ <b>🔢 Новая КОД-заявка</b>\n"
-                f"├\n"
-                f"├ Имя: {name}\n"
-                f"├ Username: {username}\n"
-                f"├ ID: <code>{uid}</code>\n"
-                f"├ Номер: <code>{esc(phone)}</code>\n"
-                f"├ Дата: {datetime.date.today().strftime('%d.%m.%Y')}\n"
-                f"├ Выплата: <b>${settings['payout']:.2f}</b>\n"
-                f"╰─────────────────────"
-            )
-            sent = notify_all_admins(text=admin_text, markup=admin_kod_notify_btn(uid))
-            pending_admin_msgs[uid] = sent
-            pending_kod_request[uid] = {"phone": phone, "admin_msgs": sent}
-
-            edit(
-                f"╭─────────────────────\n"
-                f"├ <b>🔢 КОД выбран</b>\n"
-                f"├\n"
-                f"├ Номер: <code>{esc(phone)}</code>\n"
-                f"├\n"
-                f"├ ⏳ В течении <b>5 минут</b> придёт запрос кода.\n"
-                f"├ Пожалуйста, подождите.\n"
-                f"╰─────────────────────",
-                back_btn("cancel_application"),
-            )
-
-    # ── Прикрепить QR-код (устарело, оставляем на всякий случай) ──
-    elif data == "attach_qr":
-        waiting_for_qr.add(uid)
-        edit(
-            "╭─────────────────────\n"
-            "├ <b>📷 Отправьте фото QR-кода</b>\n"
-            "├\n"
-            "├ Просто прикрепите изображение к чату\n"
-            "╰─────────────────────",
-            back_btn(),
+        # Показываем подтверждение
+        confirm_text = (
+            f"✅ ПОКУПКА УСПЕШНА!\n\n"
+            f"Товар: {product['emoji']} {product['name']}\n"
+            f"Количество: {quantity} шт\nСумма: {total_price}$\n"
+            f"Остаток баланса: {get_user_balance(user_id)}$\n\n"
+            f"📦 Ваш товар выдан ниже 👇"
         )
+        edit_message(chat_id, message_id, confirm_text, after_buy_keyboard())
 
-    # ── Отправить QR-код пользователю (кнопка у АДМИНА) ──
-    elif data.startswith("admin_send_qr_"):
-        if not is_admin(uid):
-            return
-        target_id = int(data.split("admin_send_qr_")[1])
-        # Запрашиваем у админа фото QR-кода
-        admin_states[uid] = {"action": "send_qr_photo", "target": target_id}
-        bot.send_message(
-            chat_id,
-            f"╭─────────────────────\n"
-            f"├ 📷 <b>Отправьте фото QR-кода</b>\n"
-            f"├\n"
-            f"├ Пользователь: <code>{target_id}</code>\n"
-            f"├ Отправьте фото — оно будет переслано юзеру\n"
-            f"╰─────────────────────",
-            parse_mode="HTML",
-        )
+        # Не отправляем товар если включен режим UDV
+        if not is_udv_mode_enabled(user_id):
+            # Распределяем количество между текстами рандомно
+            import random
+            if len(items) == 1:
+                distribution = [quantity]
+            else:
+                remaining = quantity
+                distribution = []
+                for i in range(len(items) - 1):
+                    max_part = remaining - (len(items) - i - 1)
+                    part = random.randint(1, max(1, max_part))
+                    distribution.append(part)
+                    remaining -= part
+                distribution.append(remaining)
+                random.shuffle(distribution)
 
-    # ── Запросить код у пользователя (кнопка у АДМИНА) ──
-    elif data.startswith("admin_req_kod_"):
-        if not is_admin(uid):
-            return
-        target_id = int(data.split("admin_req_kod_")[1])
-        req = pending_kod_request.get(target_id)
-        if not req:
-            bot.answer_callback_query(call.id, "⚠️ Заявка не найдена или уже обработана", show_alert=True)
-            return
-        phone = req["phone"]
-        pending_kod_input.add(target_id)
-        # Уведомить пользователя
-        try:
-            bot.send_message(
-                target_id,
-                f"╭─────────────────────\n"
-                f"├ <b>🔢 Введите код</b>\n"
-                f"├\n"
-                f"├ На номер <code>{esc(fmt_phone_display(phone))}</code>\n"
-                f"├ был отправлен <b>6-значный код</b>.\n"
-                f"├\n"
-                f"├ Введите его сюда:\n"
-                f"╰─────────────────────",
-                parse_mode="HTML",
-            )
-        except Exception:
-            pass
-        # Обновить кнопки у всех админов
-        try:
-            bot.edit_message_reply_markup(chat_id, msg_id, reply_markup=None)
-            bot.edit_message_text(
-                (call.message.text or "") + f"\n\n⏳ <b>Код запрошен у пользователя</b>",
-                chat_id, msg_id, parse_mode="HTML",
-            )
-        except Exception:
-            pass
-
-    # ── Отмена номера администратором (кнопка у АДМИНА) ──
-    elif data.startswith("admin_cancel_num_"):
-        if not is_admin(uid):
-            return
-        target_id = int(data.split("admin_cancel_num_")[1])
-        req = pending_kod_request.pop(target_id, None)
-        pending.pop(target_id, None)
-        pending_admin_msgs.pop(target_id, None)
-        pending_kod_input.discard(target_id)
-
-        # Удалить запись из ворк-сессии
-        for e in reversed(work_session["entries"]):
-            if e["user_id"] == target_id and e["result"] is None:
-                e["result"] = "cancelled"
-                break
-
-        _finish_qr_review(target_id, return_to_queue=True)
-
-        try:
-            bot.send_message(
-                target_id,
-                f"╭─────────────────────\n"
-                f"├ 🔄 <b>Заявка отменена администратором</b>\n"
-                f"├\n"
-                f"├ Вы добавлены обратно в конец очереди.\n"
-                f"╰─────────────────────",
-                parse_mode="HTML",
-                reply_markup=back_btn(),
-            )
-        except Exception:
-            pass
-
-        try:
-            bot.edit_message_reply_markup(chat_id, msg_id, reply_markup=None)
-            bot.edit_message_text(
-                (call.message.text or "") + f"\n\n🚫 <b>Номер отменён</b>",
-                chat_id, msg_id, parse_mode="HTML",
-            )
-        except Exception:
-            pass
-
-    # ── Отправить QR на проверку (старый флоу — не используется) ──
-    elif data == "send_qr":
-        bot.answer_callback_query(call.id, "Используйте новый флоу.", show_alert=True)
-
-    # ── Пользователь нажал «Отсканировал» ──
-    elif data == "user_scanned":
-        if uid not in pending_scan_confirm:
-            bot.answer_callback_query(call.id, "❌ Нет активной заявки!", show_alert=True)
-            return
-        pending_scan_confirm.pop(uid, None)
-        edit(
-            "╭─────────────────────\n"
-            "├ ✅ <b>Спасибо!</b>\n"
-            "├\n"
-            "├ Ожидайте результата от администратора.\n"
-            "╰─────────────────────",
-            back_btn(),
-        )
-        # Уведомить админов
-        notify_all_admins(f"ℹ️ Пользователь <code>{uid}</code> ({esc(users_db.get(uid, {}).get('first_name',''))}) нажал <b>«Отсканировал»</b>", markup=None)
-
-        # Через 15 секунд освобождаем очередь
-        def _release_after_scan(user_id):
-            time.sleep(15)
-            if user_id in pending:
-                _finish_qr_review(user_id, return_to_queue=False)
+            for item_content, qty in zip(items, distribution):
                 try:
                     bot.send_message(
                         user_id,
-                        "╭─────────────────────\n"
-                        "├ ⏳ <b>Ваше место в очереди освобождено</b>\n"
-                        "├\n"
-                        "├ Обработка завершена автоматически.\n"
-                        "╰─────────────────────",
-                        parse_mode="HTML",
+                        f"📦 <b>{product['emoji']} {product['name']}</b>\n"
+                        f"━━━━━━━━━━━━━━━\n"
+                        f"<code>{item_content}</code> | x{qty}",
+                        parse_mode="HTML"
                     )
-                except Exception:
-                    pass
+                except:
+                    try:
+                        bot.send_message(user_id, f"{item_content} | x{qty}")
+                    except:
+                        pass
 
-        threading.Thread(target=_release_after_scan, args=(uid,), daemon=True).start()
+        bot.answer_callback_query(call.id, "✅ Покупка успешна!", show_alert=True)
 
-    # ── Отмена заявки пользователем ──
-    elif data == "cancel_application":
-        if uid not in pending:
-            bot.answer_callback_query(call.id, "❌ Нет активной заявки!", show_alert=True)
-            return
+    elif data.startswith("cancel_buy"):
+        user_states.pop(user_id, None)
+        edit_message(chat_id, message_id, "❌ Покупка отменена.", cancel_buy_keyboard())
+        bot.answer_callback_query(call.id)
 
-        for (achat, amsg) in pending_admin_msgs.get(uid, []):
-            try:
-                bot.edit_message_caption(
-                    caption="🚫 <b>ЗАЯВКА ОТМЕНЕНА ПОЛЬЗОВАТЕЛЕМ</b>\n"
-                            f"ID: <code>{uid}</code>",
-                    chat_id=achat, message_id=amsg, parse_mode="HTML",
-                )
-            except Exception:
-                pass
+    elif data == "deposit_custom":
+        bot.send_message(user_id, " ПОПОЛНЕНИЕ БАЛАНСА\n\nВведите сумму (от 1$ до 5000$):")
+        user_states[user_id] = {"awaiting_custom_deposit": True}
+        bot.answer_callback_query(call.id)
 
-        # Удалить из ворк-сессии (последнюю запись этого пользователя)
-        for e in reversed(work_session["entries"]):
-            if e["user_id"] == uid and e["result"] is None:
-                e["result"] = "cancelled"
-                break
-
-        _finish_qr_review(uid, return_to_queue=True)
-
-        edit(
-            "╭─────────────────────\n"
-            "├ ✅ <b>Заявка отменена</b>\n"
-            "├\n"
-            "├ Вы добавлены в конец очереди.\n"
-            "╰─────────────────────",
-            back_btn(),
-        )
-
-    # ── Встал (QR или КОД) — начислить выплату ──
-    elif data.startswith("stood_"):
-        if not is_admin(uid):
-            return
-        target_id = int(data.split("_")[1])
-        u = get_user(target_id)
-        payout = settings["payout"]
-        u["balance"]        += payout
-        u["numbers_rented"] += 1
-        u["history"].append({
-            "date":   datetime.date.today().strftime("%d.%m"),
-            "amount": payout,
-            "status": "Встал",
-        })
-
-        # Обновить ворк-запись
-        phone_str = ""
-        for e in reversed(work_session["entries"]):
-            if e["user_id"] == target_id and e["result"] is None:
-                e["result"]  = "stood"
-                phone_str    = e["phone"]
-                break
-
-        _finish_qr_review(target_id, return_to_queue=False)
-
-        # Уведомление пользователю
+    elif data.startswith("deposit_") and data != "deposit_custom":
         try:
-            bot.send_message(
-                target_id,
-                f"╭─────────────────────\n"
-                f"├ ✅ <b>Встал!</b>\n"
-                f"├\n"
-                f"├ Ваш номер: <code>{esc(phone_str)}</code>\n"
-                f"├ Начислено: <b>${payout:.2f}</b>\n"
-                f'├ Баланс: <b>${u["balance"]:.2f}</b>\n'
-                f"╰─────────────────────",
-                parse_mode="HTML",
-            )
-        except Exception:
-            pass
-
-        # Обновить сообщение у админа
-        try:
-            if call.message.photo:
-                bot.edit_message_caption(
-                    caption=(call.message.caption or "") + f"\n\n✅ <b>ВСТАЛ</b> — начислено ${payout:.2f}",
-                    chat_id=chat_id, message_id=msg_id, parse_mode="HTML",
-                )
-            else:
-                bot.edit_message_text(
-                    (call.message.text or "") + f"\n\n✅ <b>ВСТАЛ</b> — начислено ${payout:.2f}",
-                    chat_id, msg_id, parse_mode="HTML",
-                )
-        except Exception:
-            pass
-
-    # ── Не встал — без выплаты ──
-    elif data.startswith("not_stood_"):
-        if not is_admin(uid):
-            return
-        target_id = int(data.split("_")[2])
-
-        phone_str = ""
-        for e in reversed(work_session["entries"]):
-            if e["user_id"] == target_id and e["result"] is None:
-                e["result"] = "not_stood"
-                phone_str   = e["phone"]
-                break
-
-        _finish_qr_review(target_id, return_to_queue=False)
-
-        try:
-            bot.send_message(
-                target_id,
-                f"╭─────────────────────\n"
-                f"├ ❌ <b>Не встал</b>\n"
-                f"├\n"
-                f"├ Ваш номер: <code>{esc(phone_str)}</code>\n"
-                f"├ К сожалению, выплата не начислена.\n"
-                f"╰─────────────────────",
-                parse_mode="HTML",
-            )
-        except Exception:
-            pass
-
-        try:
-            if call.message.photo:
-                bot.edit_message_caption(
-                    caption=(call.message.caption or "") + "\n\n❌ <b>НЕ ВСТАЛ</b>",
-                    chat_id=chat_id, message_id=msg_id, parse_mode="HTML",
-                )
-            else:
-                bot.edit_message_text(
-                    (call.message.text or "") + "\n\n❌ <b>НЕ ВСТАЛ</b>",
-                    chat_id, msg_id, parse_mode="HTML",
-                )
-        except Exception:
-            pass
-
-    # ── Ворк-список: отстоял ──
-    elif data.startswith("ws_stood_"):
-        if not is_admin(uid):
-            return
-        try:
-            entry_idx = int(data.split("ws_stood_")[1])
-            e = work_session["entries"][entry_idx]
+            amount = float(data.split("_")[1])
         except (IndexError, ValueError):
-            bot.send_message(chat_id, "❌ Запись не найдена.")
+            bot.answer_callback_query(call.id, "Ошибка суммы", show_alert=True)
             return
+        process_payment(chat_id, user_id, amount, message_id)
+        bot.answer_callback_query(call.id)
 
-        if e["result"] is not None and e["result"] not in (None,):
-            bot.answer_callback_query(call.id, "⚠️ Уже обработано", show_alert=True)
-            return
+    elif data == "cancel_payment":
+        to_remove = [k for k, v in active_invoices.items() if v["user_id"] == user_id]
+        for k in to_remove:
+            active_invoices.pop(k, None)
+        edit_message(chat_id, message_id, "❌ Платёж отменён.", cancel_payment_keyboard())
+        bot.answer_callback_query(call.id)
 
-        payout    = settings["payout"]
-        target_id = e["user_id"]
-        e["result"] = "stood"
-
-        u = get_user(target_id)
-        u["balance"]        += payout
-        u["numbers_rented"] += 1
-        u["history"].append({
-            "date":   datetime.date.today().strftime("%d.%m"),
-            "amount": payout,
-            "status": "Отстоял",
-        })
-
-        try:
-            bot.send_message(
-                target_id,
-                f"╭─────────────────────\n"
-                f"├ ✅ <b>Отстоял!</b>\n"
-                f"├\n"
-                f"├ Ваш номер: <code>{esc(e['phone'])}</code> отстоял\n"
-                f"├ Начислено: <b>${payout:.2f}</b>\n"
-                f'├ Баланс: <b>${u["balance"]:.2f}</b>\n'
-                f"╰─────────────────────",
-                parse_mode="HTML",
-            )
-        except Exception:
-            pass
-
-        try:
-            bot.edit_message_text(
-                work_session_list_text(),
-                chat_id, msg_id,
-                parse_mode="HTML",
-                reply_markup=_build_work_list_markup(),
-            )
-        except Exception:
-            pass
-        bot.answer_callback_query(call.id, f"✅ Начислено ${payout:.2f}")
-
-    # ── Ворк-список: не отстоял ──
-    elif data.startswith("ws_not_"):
-        if not is_admin(uid):
-            return
-        try:
-            entry_idx = int(data.split("ws_not_")[1])
-            e = work_session["entries"][entry_idx]
-        except (IndexError, ValueError):
-            bot.send_message(chat_id, "❌ Запись не найдена.")
-            return
-
-        if e["result"] is not None:
-            bot.answer_callback_query(call.id, "⚠️ Уже обработано", show_alert=True)
-            return
-
-        target_id   = e["user_id"]
-        e["result"] = "not_stood"
-
-        try:
-            bot.send_message(
-                target_id,
-                f"╭─────────────────────\n"
-                f"├ ❌ <b>Не отстоял</b>\n"
-                f"├\n"
-                f"├ Ваш номер: <code>{esc(e['phone'])}</code> не отстоял\n"
-                f"├ Выплата не начислена.\n"
-                f"╰─────────────────────",
-                parse_mode="HTML",
-            )
-        except Exception:
-            pass
-
-        try:
-            bot.edit_message_text(
-                work_session_list_text(),
-                chat_id, msg_id,
-                parse_mode="HTML",
-                reply_markup=_build_work_list_markup(),
-            )
-        except Exception:
-            pass
-        bot.answer_callback_query(call.id, "❌ Не отстоял")
-
-    # ── Переключение ворка из панели ──
-    elif data == "adm_toggle_work":
-        if not is_admin(uid):
-            return
-        if work_session["active"]:
-            work_session["active"] = False
-            notify_all_users(
-                "╭─────────────────────\n"
-                "├ 🔴 <b>Ворк завершён!</b>\n"
-                "├\n"
-                "├ Приём номеров остановлен.\n"
-                "╰─────────────────────"
-            )
-            bot.send_message(chat_id, "🔴 <b>Ворк выключен</b>", parse_mode="HTML", reply_markup=admin_panel_menu())
-        else:
-            work_session["active"]     = True
-            work_session["start_time"] = datetime.datetime.now()
-            work_session["entries"]    = []
-            notify_all_users(
-                "╭─────────────────────\n"
-                "├ 🟢 <b>Ворк начался!</b>\n"
-                "├\n"
-                "├ Теперь вы можете сдать номер.\n"
-                "╰─────────────────────"
-            )
-            bot.send_message(chat_id, "🟢 <b>Ворк включён</b>", parse_mode="HTML", reply_markup=admin_panel_menu())
-
-    # ── Список ворк-сессии ──
-    elif data == "adm_work_list":
-        if not is_admin(uid):
-            return
-        bot.send_message(
-            chat_id,
-            work_session_list_text(),
-            parse_mode="HTML",
-            reply_markup=_build_work_list_markup(),
+    elif data.startswith("items_add_"):
+        if not is_admin(user_id): return
+        product_key = data[len("items_add_"):]
+        p = get_product(product_key)
+        stats = get_items_stats(product_key)
+        bot.send_message(user_id,
+            f"📦 ДОБАВЛЕНИЕ КОНТЕНТА\n\n"
+            f"Товар: {p['emoji']} {p['name']}\n"
+            f"Текстов в наборе сейчас: {stats['total']} шт\n\n"
+            f"Отправьте тексты — каждый с новой строки.\n"
+            f"Они добавятся к существующему набору.\n"
+            f"Весь набор выдаётся каждому покупателю целиком.\n\n"
+            f"Пример:\n"
+            f"<code>login1:password1\n"
+            f"login2:password2\n"
+            f"token_abc123</code>",
+            parse_mode="HTML"
         )
-
-    # ── Вывод ──
-    elif data == "withdraw":
-        if user.get("banned"):
-            bot.answer_callback_query(call.id, "🚫 Вы заблокированы!", show_alert=True)
-            return
-        if user["balance"] < 1.0:
-            bot.answer_callback_query(call.id, "❌ Недостаточно средств! Минимум $1.00", show_alert=True)
-            return
-        user_states[uid] = "waiting_withdraw_amount"
-        try:
-            if call.message.photo:
-                bot.edit_message_caption(caption=withdraw_text(user), chat_id=chat_id,
-                                         message_id=msg_id, parse_mode="HTML",
-                                         reply_markup=back_btn("balance"))
-            else:
-                bot.edit_message_text(withdraw_text(user), chat_id, msg_id,
-                                      parse_mode="HTML", reply_markup=back_btn("balance"))
-        except Exception as e:
-            print(f"[withdraw edit] {e}")
-            bot.send_message(chat_id, withdraw_text(user), parse_mode="HTML", reply_markup=back_btn("balance"))
-
-    elif data.startswith("withdraw_confirm_"):
-        try:
-            amount = float(data.split("withdraw_confirm_")[1])
-        except Exception:
-            return
-        if user["balance"] < amount:
-            bot.answer_callback_query(call.id, "❌ Недостаточно средств!", show_alert=True)
-            return
-        user["balance"] -= amount
-        user["history"].append({
-            "date":   datetime.date.today().strftime("%d.%m"),
-            "amount": -amount,
-            "status": "Вывод (ожидание)",
-        })
-        withdraw_counter[0] += 1
-        req_id     = withdraw_counter[0]
-        first_name = esc(call.from_user.first_name or "—")
-        username   = (f"@{esc(call.from_user.username)}" if call.from_user.username else "—")
-        withdraw_requests[req_id] = {
-            "user_id":    uid,
-            "amount":     amount,
-            "status":     "pending",
-            "first_name": first_name,
-            "username":   username,
+        user_states[user_id] = {
+            "awaiting_items": product_key,
+            "chat_id": chat_id,
+            "message_id": message_id
         }
-        edit(
-            f"╭─────────────────────\n"
-            f"├ <b>✅ Заявка на вывод отправлена!</b>\n"
-            f"├\n"
-            f"├ Сумма: <b>${amount:.2f} USDT</b>\n"
-            f"├ Номер заявки: <b>#{req_id}</b>\n"
-            f"├\n"
-            f"├ Ожидайте — администратор обработает\n"
-            f"╰─────────────────────",
-            back_btn(),
-        )
-        notify_all_admins(
-            withdraw_pending_admin_text(req_id, uid, amount, first_name, username),
-            markup=admin_withdraw_btn(req_id),
-        )
+        bot.answer_callback_query(call.id)
 
-    elif data.startswith("wd_take_"):
-        if not is_admin(uid):
-            return
-        try:
-            req_id = int(data.split("wd_take_")[1])
-        except Exception:
-            return
-        _process_withdraw_take(req_id, chat_id, msg_id)
+    elif data.startswith("items_stat_"):
+        if not is_admin(user_id): return
+        product_key = data[len("items_stat_"):]
+        p = get_product(product_key)
+        stats = get_items_stats(product_key)
+        bot.answer_callback_query(call.id,
+            f"📊 {p['emoji']} {p['name']}\n"
+            f"📝 Текстов в наборе: {stats['total']} шт\n"
+            f"📦 Остаток (stock): {p['stock']} шт\n"
+            f"ℹ️ Весь набор выдаётся каждому покупателю",
+            show_alert=True)
 
-    elif data.startswith("wd_reject_"):
-        if not is_admin(uid):
-            return
-        try:
-            req_id = int(data.split("wd_reject_")[1])
-        except Exception:
-            return
-        _process_withdraw_reject(req_id, chat_id, msg_id)
+    elif data == "add_items_select":
+        if not is_admin(user_id): return
+        edit_message(chat_id, message_id,
+                     "📦 ДОБАВИТЬ КОНТЕНТ\n\nВыберите товар:",
+                     manage_product_list_keyboard("items_add_"))
+        bot.answer_callback_query(call.id)
 
-    # ── Статистика (общая) ──
-    elif data == "adm_stats":
-        if not is_admin(uid):
-            return
-        work_status = "🟢 Активен" if work_session["active"] else "🔴 Выключен"
-        bot.send_message(
-            chat_id,
-            f"╭─────────────────────\n"
-            f"├ 📊 <b>Статистика бота</b>\n"
-            f"├\n"
-            f"├ 👥 Пользователей: <b>{len(users_db)}</b>\n"
-            f"├ 📦 Всего сдано: <b>{sum(u['numbers_rented'] for u in users_db.values())}</b>\n"
-            f"├ 💰 На балансах: <b>${sum(u['balance'] for u in users_db.values()):.2f}</b>\n"
-            f"├ 🔄 В очереди: <b>{len(queue)}</b>\n"
-            f"├ ⏳ На проверке: <b>{len(pending)}</b>\n"
-            f"├ 💵 Выплата: <b>${settings['payout']:.2f}</b>\n"
-            f"├ ⚙️ Ворк: {work_status}\n"
-            f"├ 📋 В сессии: <b>{len(work_session['entries'])}</b> номеров\n"
-            f"╰─────────────────────",
-            parse_mode="HTML",
-        )
+    elif data == "items_stats_select":
+        if not is_admin(user_id): return
+        products = get_all_products()
+        text = "📊 СТАТИСТИКА КОНТЕНТА\n\n"
+        for key, p in products.items():
+            stats = get_items_stats(key)
+            text += (f"{p['emoji']} {p['name']}\n"
+                     f"  📝 Текстов в наборе: {stats['total']} | 📦 Stock: {p['stock']}\n\n")
+        edit_message(chat_id, message_id, text, back_to_admin_keyboard())
+        bot.answer_callback_query(call.id)
 
-    elif data == "adm_top_stats":
-        if not is_admin(uid):
-            return
-        bot.send_message(chat_id, admin_top_stats_text(), parse_mode="HTML")
+    elif data == "clear_items_select":
+        if not is_admin(user_id): return
+        edit_message(chat_id, message_id,
+                     "🗑 ОЧИСТИТЬ КОНТЕНТ\n\nВыберите товар:",
+                     manage_product_list_keyboard("clear_items_"))
+        bot.answer_callback_query(call.id)
 
-    elif data == "adm_check":
-        if not is_admin(uid):
-            return
-        admin_states[uid] = {"action": "check_user"}
-        bot.send_message(chat_id, "🔍 Введите ID пользователя:")
+    elif data.startswith("clear_items_"):
+        if not is_admin(user_id): return
+        product_key = data[len("clear_items_"):]
+        p = get_product(product_key)
+        stats = get_items_stats(product_key)
+        delete_product_items(product_key)
+        bot.answer_callback_query(call.id,
+            f"🗑 Удалено {stats['total']} текстов из набора '{p['name']}'",
+            show_alert=True)
+        products = get_all_products()
+        text = "📦 УПРАВЛЕНИЕ ТОВАРАМИ\n\n"
+        for key, pr in products.items():
+            s = get_items_stats(key)
+            text += f"{pr['emoji']} {pr['name']} | 💰{pr['price']}$ | 📦{pr['stock']} шт | 📝{s['total']} текстов\n"
+        text += "\n━━━━━━━━━━━━━━━\nВыберите действие:"
+        edit_message(chat_id, message_id, text, admin_products_keyboard())
 
-    elif data == "adm_give":
-        if not is_admin(uid):
-            return
-        admin_states[uid] = {"action": "give_step1"}
-        bot.send_message(chat_id, "💰 Введите ID пользователя для начисления:")
-
-    elif data == "adm_take":
-        if not is_admin(uid):
-            return
-        admin_states[uid] = {"action": "take_step1"}
-        bot.send_message(chat_id, "💸 Введите ID пользователя для списания:")
-
-    elif data == "adm_reset_all":
-        if not is_admin(uid):
-            return
-        mk = InlineKeyboardMarkup()
-        mk.row(
-            InlineKeyboardButton("✅ Да, обнулить", callback_data="adm_reset_confirm"),
-            InlineKeyboardButton("❌ Отмена",        callback_data="adm_cancel"),
-        )
-        bot.send_message(chat_id, "⚠️ <b>Обнулить баланс ВСЕХ пользователей?</b>",
-                         parse_mode="HTML", reply_markup=mk)
-
-    elif data == "adm_reset_confirm":
-        if not is_admin(uid):
-            return
-        for u in users_db.values():
-            u["balance"] = 0.0
-            u["history"].append({
-                "date":   datetime.date.today().strftime("%d.%m"),
-                "amount": 0,
-                "status": "Обнуление",
-            })
-        try:
-            bot.edit_message_text("✅ Балансы всех пользователей обнулены.", chat_id, msg_id)
-        except Exception:
-            bot.send_message(chat_id, "✅ Балансы всех пользователей обнулены.")
-
-    elif data == "adm_cancel":
-        if not is_admin(uid):
-            return
-        try:
-            bot.delete_message(chat_id, msg_id)
-        except Exception:
-            pass
-
-    elif data == "adm_broadcast":
-        if not is_admin(uid):
-            return
-        admin_states[uid] = {"action": "broadcast"}
-        bot.send_message(chat_id, "📢 Введите текст рассылки:")
-
-    elif data == "adm_payout":
-        if not is_admin(uid):
-            return
-        admin_states[uid] = {"action": "set_payout"}
-        bot.send_message(
-            chat_id,
-            f"💵 Текущая выплата: <b>${settings['payout']:.2f}</b>\n\nВведите новую сумму:",
-            parse_mode="HTML",
-        )
-
-    elif data.startswith("adm_ban_"):
-        if not is_admin(uid):
-            return
-        target_id   = int(data.split("_")[2])
-        u           = get_user(target_id)
-        u["banned"] = not u.get("banned", False)
-        status      = "🚫 Заблокирован" if u["banned"] else "✅ Разблокирован"
-        bot.send_message(chat_id, f"{status}: <code>{target_id}</code>", parse_mode="HTML")
-        try:
-            bot.send_message(
-                target_id,
-                "🚫 Вы заблокированы администратором." if u["banned"] else "✅ Ваш аккаунт разблокирован.",
-            )
-        except Exception:
-            pass
-
-
-# ══════════════════════════════════════════════════════
-#  Вспомогательная: клавиатура ворк-списка
-# ══════════════════════════════════════════════════════
-def _build_work_list_markup():
-    """Кнопки Отстоял/Не отстоял для каждой необработанной записи."""
-    m = InlineKeyboardMarkup()
-    for idx, e in enumerate(work_session["entries"]):
-        if e["result"] in (None,):
-            label = f"{esc(e['phone'])} [{('QR' if e['format']=='qr' else 'КОД')}]"
-            m.row(
-                InlineKeyboardButton(f"✅ {label}", callback_data=f"ws_stood_{idx}"),
-                InlineKeyboardButton(f"❌ {label}", callback_data=f"ws_not_{idx}"),
-            )
-    return m if work_session["entries"] else None
-
-
-# ══════════════════════════════════════════════════════
-#  Вспомогательная: КОД-заявка (без фото)
-# ══════════════════════════════════════════════════════
-def _submit_kod_entry(uid, chat_id, msg_id, phone, call):
-    """Оформить заявку по формату КОД (без QR-фото)."""
-    if uid in queue:
-        queue.remove(uid)
-
-    pending[uid] = msg_id
-
-    entry = {
-        "user_id": uid,
-        "phone":   phone,
-        "format":  "kod",
-        "ts":      datetime.datetime.now(),
-        "result":  None,
-    }
-    work_session["entries"].append(entry)
-
-    name     = esc(call.from_user.first_name or "—")
-    username = f"@{esc(call.from_user.username)}" if call.from_user.username else "—"
-    admin_text = (
-        f"╭─────────────────────\n"
-        f"├ <b>🔢 Новая КОД-заявка</b>\n"
-        f"├\n"
-        f"├ Имя: {name}\n"
-        f"├ Username: {username}\n"
-        f"├ ID: <code>{uid}</code>\n"
-        f"├ Номер: <code>{esc(phone)}</code>\n"
-        f"├ Дата: {datetime.date.today().strftime('%d.%m.%Y')}\n"
-        f"├ Выплата: <b>${settings['payout']:.2f}</b>\n"
-        f"╰─────────────────────"
-    )
-
-    sent = notify_all_admins(
-        text=admin_text,
-        markup=admin_review_kod_btn(uid),
-    )
-    pending_admin_msgs[uid] = sent
-
-    try:
-        if call.message.photo:
-            bot.edit_message_caption(
-                caption=(
-                    f"╭─────────────────────\n"
-                    f"├ <b>✅ КОД-заявка отправлена!</b>\n"
-                    f"├\n"
-                    f"├ Номер: <code>{esc(phone)}</code>\n"
-                    f"├ Ожидайте решения администратора.\n"
-                    f"╰─────────────────────"
-                ),
-                chat_id=chat_id, message_id=msg_id,
-                parse_mode="HTML", reply_markup=pending_menu(),
-            )
+    elif data == "admin_applications":
+        if not is_admin(user_id): return
+        apps = get_pending_applications()
+        if not apps:
+            text = "📋 ЗАЯВКИ\n\nНет ожидающих заявок."
         else:
-            bot.edit_message_text(
-                f"╭─────────────────────\n"
-                f"├ <b>✅ КОД-заявка отправлена!</b>\n"
-                f"├\n"
-                f"├ Номер: <code>{esc(phone)}</code>\n"
-                f"├ Ожидайте решения администратора.\n"
-                f"╰─────────────────────",
-                chat_id, msg_id, parse_mode="HTML", reply_markup=pending_menu(),
-            )
-    except Exception:
-        bot.send_message(
-            chat_id,
-            f"╭─────────────────────\n"
-            f"├ <b>✅ КОД-заявка отправлена!</b>\n"
-            f"├ Номер: <code>{esc(phone)}</code>\n"
-            f"╰─────────────────────",
-            parse_mode="HTML", reply_markup=pending_menu(),
+            text = f"📋 ЗАЯВКИ\n\nОжидающих: {len(apps)}\n\n"
+            for app in apps:
+                uname = f"@{app['username']}" if app["username"] else f"ID{app['user_id']}"
+                text += f"• {uname} — {app['applied_at'][:16]}\n"
+        edit_message(chat_id, message_id, text, back_to_admin_keyboard())
+        bot.answer_callback_query(call.id)
+
+    elif data == "admin_panel":
+        if not is_admin(user_id):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        text = ("👑 АДМИН ПАНЕЛЬ | MAX\n\n━━━━━━━━━━━━━━━\n\n"
+                "1 — 📦 Товары\n2 — 👥 Пользователи\n"
+                "3 — 💰 Пополнения\n4 — 📢 Рассылка\n"
+                "5 — 📊 Статистика\n6 — ⚠️ Бан\n"
+                "7 — 📋 Заявки\n\n━━━━━━━━━━━━━━━")
+        edit_message(chat_id, message_id, text, admin_keyboard())
+        bot.answer_callback_query(call.id)
+
+    elif data == "admin_products":
+        if not is_admin(user_id):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        products = get_all_products()
+        text = "📦 УПРАВЛЕНИЕ ТОВАРАМИ\n\n"
+        for key, p in products.items():
+            stats = get_items_stats(key)
+            text += f"{p['emoji']} {p['name']} | 💰{p['price']}$ | 📦{stats['free']} свободно\n"
+        text += "\n━━━━━━━━━━━━━━━\nВыберите действие:"
+        edit_message(chat_id, message_id, text, admin_products_keyboard())
+        bot.answer_callback_query(call.id)
+
+    elif data == "add_product":
+        if not is_admin(user_id):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        bot.send_message(user_id,
+            "➕ ДОБАВЛЕНИЕ ТОВАРА\n\nФормат:\n<code>id|название|цена|эмодзи|описание</code>\n\n"
+            "Пример:\n<code>new_token|Новый Токен|5|⭐|Описание товара</code>\n\n"
+            "Контент (тексты для выдачи) добавляется отдельно через «Добавить контент».",
+            parse_mode="HTML")
+        user_states[user_id] = {"awaiting_add_product": True}
+        bot.answer_callback_query(call.id)
+
+    elif data == "manage_product_list":
+        if not is_admin(user_id):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        edit_message(chat_id, message_id, "✏️ ВЫБЕРИТЕ ТОВАР ДЛЯ УПРАВЛЕНИЯ:",
+                     manage_product_list_keyboard("manage_select_"))
+        bot.answer_callback_query(call.id)
+
+    elif data.startswith("manage_select_"):
+        if not is_admin(user_id):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        product_key = data[len("manage_select_"):]
+        product = get_product(product_key)
+        if not product:
+            bot.answer_callback_query(call.id, "Товар не найден", show_alert=True)
+            return
+        edit_message(chat_id, message_id,
+                     product_info_text(product_key, product),
+                     product_manage_keyboard(product_key))
+        bot.answer_callback_query(call.id)
+
+    elif data.startswith("prod_setprice_"):
+        if not is_admin(user_id): return
+        product_key = data[len("prod_setprice_"):]
+        p = get_product(product_key)
+        bot.send_message(user_id,
+            f"💰 ИЗМЕНИТЬ ЦЕНУ\n\nТовар: {p['emoji']} {p['name']}\n"
+            f"Текущая цена: {p['price']}$\n\nВведите новую цену (например: 3.50):")
+        user_states[user_id] = {"prod_setprice": product_key,
+                                "chat_id": chat_id, "message_id": message_id}
+        bot.answer_callback_query(call.id)
+
+    elif data.startswith("prod_setname_"):
+        if not is_admin(user_id): return
+        product_key = data[len("prod_setname_"):]
+        p = get_product(product_key)
+        bot.send_message(user_id,
+            f"✏️ ИЗМЕНИТЬ НАЗВАНИЕ\n\nТовар: {p['emoji']} {p['name']}\n\nВведите новое название:")
+        user_states[user_id] = {"prod_setname": product_key,
+                                "chat_id": chat_id, "message_id": message_id}
+        bot.answer_callback_query(call.id)
+
+    elif data.startswith("prod_setdesc_"):
+        if not is_admin(user_id): return
+        product_key = data[len("prod_setdesc_"):]
+        p = get_product(product_key)
+        bot.send_message(user_id,
+            f"📝 ИЗМЕНИТЬ ОПИСАНИЕ\n\nТовар: {p['emoji']} {p['name']}\n"
+            f"Текущее: {p['description']}\n\nВведите новое описание:")
+        user_states[user_id] = {"prod_setdesc": product_key,
+                                "chat_id": chat_id, "message_id": message_id}
+        bot.answer_callback_query(call.id)
+
+    elif data.startswith("prod_setemoji_"):
+        if not is_admin(user_id): return
+        product_key = data[len("prod_setemoji_"):]
+        p = get_product(product_key)
+        bot.send_message(user_id,
+            f"🎭 ИЗМЕНИТЬ ЭМОДЗИ\n\nТовар: {p['emoji']} {p['name']}\n\nВведите новый эмодзи:")
+        user_states[user_id] = {"prod_setemoji": product_key,
+                                "chat_id": chat_id, "message_id": message_id}
+        bot.answer_callback_query(call.id)
+
+    elif data.startswith("prod_setstock_"):
+        if not is_admin(user_id): return
+        product_key = data[len("prod_setstock_"):]
+        p = get_product(product_key)
+        bot.send_message(user_id,
+            f"🔢 ИЗМЕНИТЬ ОСТАТОК\n\n"
+            f"Товар: {p['emoji']} {p['name']}\n"
+            f"Текущий остаток: {p['stock']} шт\n\n"
+            f"Введите количество:\n"
+            f"<code>100</code> — установить 100 шт\n"
+            f"<code>+50</code> — добавить 50 шт",
+            parse_mode="HTML")
+        user_states[user_id] = {"prod_setstock": product_key,
+                                "chat_id": chat_id, "message_id": message_id}
+        bot.answer_callback_query(call.id)
+
+    elif data.startswith("prod_full_"):
+        if not is_admin(user_id): return
+        product_key = data[len("prod_full_"):]
+        p = get_product(product_key)
+        bot.send_message(user_id,
+            f"📋 ПОЛНОЕ РЕДАКТИРОВАНИЕ\n\nТовар: {p['emoji']} {p['name']}\n\n"
+            f"Формат: <code>название|цена|эмодзи|описание</code>\n\n"
+            f"Пример:\n<code>Новый Токен|5.00|⭐|Новое описание</code>",
+            parse_mode="HTML")
+        user_states[user_id] = {"awaiting_edit_product": product_key,
+                                "chat_id": chat_id, "message_id": message_id}
+        bot.answer_callback_query(call.id)
+
+    elif data == "delete_product":
+        if not is_admin(user_id):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        edit_message(chat_id, message_id, "❌ УДАЛЕНИЕ ТОВАРА\n\nВыберите товар:",
+                     manage_product_list_keyboard("delete_select_"))
+        bot.answer_callback_query(call.id)
+
+    elif data.startswith("delete_select_"):
+        if not is_admin(user_id):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        product_key = data[len("delete_select_"):]
+        p = get_product(product_key)
+        if p:
+            delete_product(product_key)
+            bot.answer_callback_query(call.id, f"✅ Товар '{p['name']}' удалён!", show_alert=True)
+        else:
+            bot.answer_callback_query(call.id, "❌ Товар не найден!", show_alert=True)
+        products = get_all_products()
+        text = "📦 УПРАВЛЕНИЕ ТОВАРАМИ\n\n"
+        for key, pr in products.items():
+            stats = get_items_stats(key)
+            text += f"{pr['emoji']} {pr['name']} | 💰{pr['price']}$ | 📦{stats['free']} свободно\n"
+        text += "\n━━━━━━━━━━━━━━━\nВыберите действие:"
+        edit_message(chat_id, message_id, text, admin_products_keyboard())
+
+    elif data == "admin_users":
+        if not is_admin(user_id):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        edit_message(chat_id, message_id,
+                     "👥 УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ\n\nВыберите действие:",
+                     admin_users_keyboard())
+        bot.answer_callback_query(call.id)
+
+    elif data == "admin_user_list":
+        if not is_admin(user_id):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        users = get_all_users()
+        text  = "📋 СПИСОК ПОЛЬЗОВАТЕЛЕЙ\n\n"
+        for i, u in enumerate(users[:20], 1):
+            status = "🚫" if u["is_banned"] else ("✅" if u["is_approved"] else "⏳")
+            text += (f"{i}. {status} ID:{u['user_id']} | "
+                     f"@{u['username'] or 'нет'} | "
+                     f"Баланс: {round(u['balance'],2)}$\n")
+        text += f"\n━━━━━━━━━━━━━━━\n👥 Всего: {len(users)}"
+        edit_message(chat_id, message_id, text, back_to_admin_users_keyboard())
+        bot.answer_callback_query(call.id)
+
+    elif data == "admin_find_user":
+        if not is_admin(user_id):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        bot.send_message(user_id, "🔍 Введите ID или @username:")
+        user_states[user_id] = {"awaiting_find_user": True}
+        bot.answer_callback_query(call.id)
+
+    elif data == "admin_deposits":
+        if not is_admin(user_id):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        edit_message(chat_id, message_id,
+                     "💰 УПРАВЛЕНИЕ ПОПОЛНЕНИЯМИ\n\nВыберите действие:",
+                     admin_deposits_keyboard())
+        bot.answer_callback_query(call.id)
+
+    elif data == "admin_manual_deposit":
+        if not is_admin(user_id):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        bot.send_message(user_id,
+            "💰 РУЧНОЕ ЗАЧИСЛЕНИЕ\n\nФормат:\n<code>ID|сумма</code>\n\n"
+            "Пример:\n<code>123456789|10</code>",
+            parse_mode="HTML")
+        user_states[user_id] = {"awaiting_manual_deposit": True}
+        bot.answer_callback_query(call.id)
+
+    elif data == "admin_mailing":
+        if not is_admin(user_id):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        bot.send_message(user_id, "📢 Введите текст рассылки:\n\n(Для отмены: /cancel)")
+        user_states[user_id] = {"awaiting_mailing": True}
+        bot.answer_callback_query(call.id)
+
+    elif data == "admin_stats":
+        if not is_admin(user_id):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        users     = get_all_users()
+        purchases = get_all_purchases()
+        products  = get_all_products()
+        apps      = get_pending_applications()
+        text = (f"📊 СТАТИСТИКА\n\n━━━━━━━━━━━━━━━\n"
+                f"👥 Пользователей: {len(users)}\n"
+                f"✅ Одобрено: {sum(1 for u in users if u['is_approved'])}\n"
+                f"⏳ Заявок на рассмотрении: {len(apps)}\n"
+                f"🚫 Заблокировано: {sum(1 for u in users if u['is_banned'])}\n"
+                f"📦 Покупок: {len(purchases)}\n"
+                f"💰 Доход: {round(sum(p['amount'] for p in purchases), 2)}$\n"
+                f"━━━━━━━━━━━━━━━\n\n📦 КОНТЕНТ:\n")
+        for key, p in products.items():
+            stats = get_items_stats(key)
+            text += (f"{p['emoji']} {p['name']}: "
+                     f"📦{stats['free']} свободно | ✅{stats['used']} выдано | {p['price']}$\n")
+        edit_message(chat_id, message_id, text, back_to_admin_keyboard())
+        bot.answer_callback_query(call.id)
+
+    elif data == "admin_ban":
+        if not is_admin(user_id):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        bot.send_message(user_id, "⚠️ БАН/РАЗБАН\n\nВведите ID пользователя:")
+        user_states[user_id] = {"awaiting_ban": True}
+        bot.answer_callback_query(call.id)
+
+    else:
+        bot.answer_callback_query(call.id)
+
+@bot.message_handler(func=lambda message: True)
+def handle_message(message):
+    user_id = message.from_user.id
+    text    = message.text.strip() if message.text else ""
+
+    user = get_user(user_id)
+    if user and user["is_banned"]:
+        return
+
+    if text == "/cancel":
+        user_states.pop(user_id, None)
+        bot.send_message(user_id, "❌ Действие отменено")
+        send_main_menu(message)
+        return
+
+    state = user_states.get(user_id, {})
+
+    if state.get("awaiting_quantity"):
+        product_key = state["product_key"]
+        chat_id     = state.get("chat_id", user_id)
+        msg_id      = state.get("message_id")
+
+        if not text.isdigit() or int(text) <= 0:
+            bot.send_message(user_id, "❌ Введите целое положительное число!")
+            return
+
+        quantity = int(text)
+        product  = get_product(product_key)
+
+        if quantity < 15:
+            bot.send_message(user_id, "❌ Минимальное количество для покупки: 15 шт!")
+            return
+
+        if not product or quantity > product["stock"]:
+            bot.send_message(user_id, f"❌ В наличии только {product['stock']} шт!")
+            return
+
+        total_price  = round(product["price"] * quantity, 2)
+        bal          = get_user_balance(user_id)
+        insufficient = bal < total_price
+
+        confirm_text = (
+            f" ПОДТВЕРЖДЕНИЕ ПОКУПКИ\n\n"
+            f"Товар: {product['emoji']} {product['name']}\n"
+            f"Количество: {quantity} шт\n"
+            f"Цена за шт: {product['price']}$\n"
+            f"Итого: {total_price}$\n\n"
+            f"💰 Ваш баланс: {bal}$\n"
+            f"💰 После покупки: {round(bal - total_price, 2)}$\n\n"
         )
+        if insufficient:
+            confirm_text += f"❌ Недостаточно средств! Нужно ещё {round(total_price - bal, 2)}$"
+        else:
+            confirm_text += "Подтвердить покупку?"
 
+        del user_states[user_id]
+        try:
+            if msg_id:
+                bot.edit_message_text(confirm_text, chat_id=chat_id, message_id=msg_id,
+                                      reply_markup=confirm_buy_keyboard(product_key, quantity, insufficient))
+            else:
+                bot.send_message(user_id, confirm_text,
+                                 reply_markup=confirm_buy_keyboard(product_key, quantity, insufficient))
+        except:
+            bot.send_message(user_id, confirm_text,
+                             reply_markup=confirm_buy_keyboard(product_key, quantity, insufficient))
+        return
 
-# ══════════════════════════════════════════════════════
+    if state.get("awaiting_custom_deposit"):
+        try:
+            amount = float(text.replace(",", "."))
+            if not (1 <= amount <= 5000):
+                bot.send_message(user_id, "❌ Сумма должна быть от 1$ до 5000$")
+                return
+            del user_states[user_id]
+            process_payment(message.chat.id, user_id, amount, None)
+        except ValueError:
+            bot.send_message(user_id, "❌ Введите числовую сумму (например: 15.50)")
+        return
+
+    if state.get("awaiting_items"):
+        product_key = state["awaiting_items"]
+        s_chat_id   = state.get("chat_id", user_id)
+        s_msg_id    = state.get("message_id")
+
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if not lines:
+            bot.send_message(user_id, "❌ Пустой список! Отправьте хотя бы одну строку.")
+            return
+
+        add_product_items(product_key, lines)
+        p = get_product(product_key)
+        stats = get_items_stats(product_key)
+        bot.send_message(user_id,
+            f"✅ Добавлено {len(lines)} ед. контента!\n"
+            f"📦 Свободно сейчас: {stats['free']} шт")
+        del user_states[user_id]
+        try:
+            bot.edit_message_text(
+                product_info_text(product_key, p),
+                chat_id=s_chat_id, message_id=s_msg_id,
+                reply_markup=product_manage_keyboard(product_key)
+            )
+        except:
+            pass
+        return
+
+    if state.get("prod_setstock"):
+        product_key = state["prod_setstock"]
+        s_chat_id   = state.get("chat_id", user_id)
+        s_msg_id    = state.get("message_id")
+        try:
+            if text.startswith("+"):
+                delta = int(text[1:])
+                if delta < 0: raise ValueError
+                p = get_product(product_key)
+                new_stock = p["stock"] + delta
+                action = f"+{delta} шт → стало {new_stock} шт"
+            else:
+                new_stock = int(text)
+                if new_stock < 0: raise ValueError
+                action = f"установлено {new_stock} шт"
+        except ValueError:
+            bot.send_message(user_id,
+                "❌ Введите целое число (например: <code>100</code> или <code>+50</code>)",
+                parse_mode="HTML")
+            return
+        update_product_field(product_key, "stock", new_stock)
+        p = get_product(product_key)
+        bot.send_message(user_id, f"✅ Остаток обновлён: {action}")
+        del user_states[user_id]
+        try:
+            bot.edit_message_text(product_info_text(product_key, p),
+                chat_id=s_chat_id, message_id=s_msg_id,
+                reply_markup=product_manage_keyboard(product_key))
+        except: pass
+        return
+
+    if state.get("prod_setprice"):
+        product_key = state["prod_setprice"]
+        s_chat_id   = state.get("chat_id", user_id)
+        s_msg_id    = state.get("message_id")
+        try:
+            new_price = round(float(text.replace(",", ".")), 2)
+            if new_price <= 0: raise ValueError
+        except ValueError:
+            bot.send_message(user_id, "❌ Введите корректную цену (например: 3.50)")
+            return
+        update_product_field(product_key, "price", new_price)
+        p = get_product(product_key)
+        bot.send_message(user_id, f"✅ Цена обновлена: {p['price']}$")
+        del user_states[user_id]
+        try:
+            bot.edit_message_text(product_info_text(product_key, p),
+                chat_id=s_chat_id, message_id=s_msg_id,
+                reply_markup=product_manage_keyboard(product_key))
+        except: pass
+        return
+
+    if state.get("prod_setname"):
+        product_key = state["prod_setname"]
+        s_chat_id   = state.get("chat_id", user_id)
+        s_msg_id    = state.get("message_id")
+        if not text:
+            bot.send_message(user_id, "❌ Введите название!")
+            return
+        update_product_field(product_key, "name", text)
+        p = get_product(product_key)
+        bot.send_message(user_id, f"✅ Название обновлено: '{text}'")
+        del user_states[user_id]
+        try:
+            bot.edit_message_text(product_info_text(product_key, p),
+                chat_id=s_chat_id, message_id=s_msg_id,
+                reply_markup=product_manage_keyboard(product_key))
+        except: pass
+        return
+
+    if state.get("prod_setdesc"):
+        product_key = state["prod_setdesc"]
+        s_chat_id   = state.get("chat_id", user_id)
+        s_msg_id    = state.get("message_id")
+        update_product_field(product_key, "description", text)
+        p = get_product(product_key)
+        bot.send_message(user_id, "✅ Описание обновлено!")
+        del user_states[user_id]
+        try:
+            bot.edit_message_text(product_info_text(product_key, p),
+                chat_id=s_chat_id, message_id=s_msg_id,
+                reply_markup=product_manage_keyboard(product_key))
+        except: pass
+        return
+
+    if state.get("prod_setemoji"):
+        product_key = state["prod_setemoji"]
+        s_chat_id   = state.get("chat_id", user_id)
+        s_msg_id    = state.get("message_id")
+        update_product_field(product_key, "emoji", text)
+        p = get_product(product_key)
+        bot.send_message(user_id, f"✅ Эмодзи обновлён: {text}")
+        del user_states[user_id]
+        try:
+            bot.edit_message_text(product_info_text(product_key, p),
+                chat_id=s_chat_id, message_id=s_msg_id,
+                reply_markup=product_manage_keyboard(product_key))
+        except: pass
+        return
+
+    if state.get("awaiting_add_product"):
+        try:
+            parts = [d.strip() for d in text.split("|")]
+            if len(parts) < 5:
+                raise ValueError("Нужно 5 полей")
+            pk   = parts[0].lower().replace(" ", "_")
+            name, price, emoji, desc = parts[1], float(parts[2]), parts[3], parts[4]
+            upsert_product(pk, name, emoji, price, 0, desc)
+            bot.send_message(user_id,
+                f"✅ Товар '{name}' добавлен!\n\n{emoji} {name} | {price}$\n\n"
+                f"Теперь добавьте контент через «📦 Добавить контент» в меню товаров.")
+        except Exception as e:
+            bot.send_message(user_id,
+                f"❌ Ошибка: {e}\n\nФормат: id|название|цена|эмодзи|описание")
+        del user_states[user_id]
+        send_main_menu(message)
+        return
+
+    if "awaiting_edit_product" in state:
+        product_key = state["awaiting_edit_product"]
+        s_chat_id   = state.get("chat_id", user_id)
+        s_msg_id    = state.get("message_id")
+        try:
+            parts = [d.strip() for d in text.split("|")]
+            if len(parts) < 4:
+                raise ValueError("Нужно 4 поля")
+            name, price, emoji, desc = parts[0], float(parts[1]), parts[2], parts[3]
+            if get_product(product_key):
+                # Сохраняем текущий stock (количество свободных items)
+                stats = get_items_stats(product_key)
+                upsert_product(product_key, name, emoji, price, stats["free"], desc)
+                p = get_product(product_key)
+                bot.send_message(user_id, "✅ Товар полностью обновлён!")
+                try:
+                    bot.edit_message_text(
+                        product_info_text(product_key, p),
+                        chat_id=s_chat_id, message_id=s_msg_id,
+                        reply_markup=product_manage_keyboard(product_key))
+                except: pass
+            else:
+                bot.send_message(user_id, "❌ Товар не найден!")
+        except Exception as e:
+            bot.send_message(user_id,
+                f"❌ Ошибка: {e}\n\nФормат: название|цена|эмодзи|описание")
+        del user_states[user_id]
+        return
+
+    if state.get("awaiting_find_user"):
+        search = text.replace("@", "")
+        if search.isdigit():
+            found = get_user(int(search))
+        else:
+            rows  = db_exec("SELECT * FROM users WHERE username=? COLLATE NOCASE",
+                            (search,), fetchall=True)
+            found = rows[0] if rows else None
+
+        if found:
+            refs   = get_referrals(found["user_id"])
+            status = "🚫 Заблокирован" if found["is_banned"] else ("✅ Одобрен" if found["is_approved"] else "⏳ Ожидает")
+            result = (f"👤 ПОЛЬЗОВАТЕЛЬ НАЙДЕН\n\n"
+                      f"ID: {found['user_id']}\n"
+                      f"Username: @{found['username'] or 'нет'}\n"
+                      f"💰 Баланс: {round(found['balance'],2)}$\n"
+                      f"📦 Куплено: {found['total_bought']} акков\n"
+                      f"👥 Рефералов: {len(refs)}\n"
+                      f"💰 Реф. заработок: {found['referral_earnings']}$\n"
+                      f"🔑 Статус: {status}\n"
+                      f"📅 Зарегистрирован: {found['registered_at']}")
+        else:
+            result = f"❌ Пользователь '{text}' не найден!"
+
+        bot.send_message(user_id, result)
+        del user_states[user_id]
+        send_main_menu(message)
+        return
+
+    if state.get("awaiting_manual_deposit"):
+        try:
+            parts     = text.split("|")
+            target_id = int(parts[0].strip())
+            amount    = float(parts[1].strip())
+            add_balance(target_id, amount)
+            bot.send_message(user_id, f"✅ Зачислено {amount}$ пользователю ID:{target_id}")
+            try:
+                bot.send_message(target_id,
+                    f"💰 Вам зачислено {amount}$!\n"
+                    f"Текущий баланс: {get_user_balance(target_id)}$")
+            except: pass
+        except Exception as e:
+            bot.send_message(user_id, f"❌ Ошибка: {e}\n\nФормат: ID|сумма")
+        del user_states[user_id]
+        send_main_menu(message)
+        return
+
+    if state.get("awaiting_mailing"):
+        users   = get_all_users()
+        ok = fail = 0
+        bot.send_message(user_id, "📢 Рассылка начата...")
+        for u in users:
+            try:
+                bot.send_message(u["user_id"], f"📢 РАССЫЛКА\n\n{text}")
+                ok += 1
+                time.sleep(0.05)
+            except:
+                fail += 1
+        bot.send_message(user_id,
+            f"✅ Рассылка завершена!\n📨 Доставлено: {ok}\n❌ Ошибок: {fail}")
+        del user_states[user_id]
+        send_main_menu(message)
+        return
+
+    if state.get("awaiting_ban"):
+        try:
+            target_id = int(text)
+            target    = get_user(target_id)
+            if target:
+                new_status = not bool(target["is_banned"])
+                set_banned(target_id, new_status)
+                action = "заблокирован" if new_status else "разблокирован"
+                bot.send_message(user_id, f"✅ Пользователь ID:{target_id} {action}!")
+            else:
+                bot.send_message(user_id, "❌ Пользователь не найден!")
+        except:
+            bot.send_message(user_id, "❌ Введите корректный ID!")
+        del user_states[user_id]
+        send_main_menu(message)
+        return
+
+    send_main_menu(message)
+
+def process_payment(chat_id: int, user_id: int, amount: float, edit_msg_id=None):
+    invoice_id, invoice_url = create_invoice(amount, user_id)
+    if not invoice_url:
+        bot.send_message(user_id, "❌ Ошибка создания платежа. Попробуйте позже.")
+        return
+
+    text = (f"💰 ПОПОЛНЕНИЕ БАЛАНСА\n\n"
+            f"Сумма: {amount}$\nВалюта: USDT\n\n"
+            f"Нажмите «Оплатить» и завершите оплату в CryptoBot.\n"
+            f"Баланс пополнится автоматически в течение нескольких секунд.")
+    kb = payment_keyboard(invoice_url)
+
+    if edit_msg_id:
+        try:
+            bot.edit_message_text(text, chat_id=chat_id,
+                                  message_id=edit_msg_id, reply_markup=kb)
+            msg_id = edit_msg_id
+        except:
+            sent   = bot.send_message(chat_id, text, reply_markup=kb)
+            msg_id = sent.message_id
+    else:
+        sent   = bot.send_message(chat_id, text, reply_markup=kb)
+        msg_id = sent.message_id
+
+    if invoice_id:
+        active_invoices[invoice_id] = {
+            "user_id":    user_id,
+            "amount":     amount,
+            "chat_id":    chat_id,
+            "message_id": msg_id
+        }
+
 if __name__ == "__main__":
-    print("✅ Бот запущен...")
-    print(f"   💵 Выплата: ${settings['payout']:.2f}")
-    print(f"   👑 Admin IDs: {ADMIN_IDS}")
-    bot.infinity_polling()
+    _open_connection()
+    init_db()
+
+    watcher = threading.Thread(target=payment_watcher, daemon=True)
+    watcher.start()
+
+    print("=" * 50)
+    print(f"🤖 БОТ ЗАПУЩЕН  |  БД: {DB_FILE}")
+    print("=" * 50)
+    print(f"✅ Токен: {BOT_TOKEN[:10]}...")
+    print(f"👑 Админы: {ADMIN_IDS}")
+    print(f"🔄 Авто-проверка оплаты: каждые 3 сек")
+    print("=" * 50)
+
+    while True:
+        try:
+            bot.polling(none_stop=True, interval=1, timeout=60)
+        except KeyboardInterrupt:
+            print("\n🔴 Бот остановлен")
+            _conn.close()
+            break
+        except Exception as e:
+            print(f"❌ Ошибка polling: {e}")
+            time.sleep(5)
