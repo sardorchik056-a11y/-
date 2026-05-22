@@ -1135,7 +1135,7 @@ Web Token и JSON замене не подлежат если были рабо�
         u    = get_user(user_id)
         bal  = round(u["balance"], 2) if u else 0.0
         name = call.from_user.first_name or username or "Пользователь"
-        text  = "<tg-emoji emoji-id="5258204546391351475">🎟</tg-emoji> Баланс\n\n'
+        text  = '<tg-emoji emoji-id="5258204546391351475">🎟</tg-emoji> Баланс\n\n'
         text += "╭─────────────────\n"
         text += f'├ <tg-emoji emoji-id="5260399854500191689">🎟</tg-emoji> : {name}\n'
         text += f'├ <tg-emoji emoji-id="5282843764451195532">🎟</tg-emoji> ID: {user_id}\n'
