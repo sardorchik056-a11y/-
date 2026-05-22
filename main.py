@@ -719,6 +719,36 @@ def application_admin_keyboard(app_user_id: int):
     )
     return kb
 
+def is_admin(user_id: int) -> bool:
+    return user_id in ADMIN_IDS
+
+def edit_message(chat_id, message_id, text, keyboard=None):
+    try:
+        bot.edit_message_text(text, chat_id=chat_id, message_id=message_id,
+                              reply_markup=keyboard, parse_mode="HTML")
+    except:
+        pass
+
+def notify_admins_about_application(user_id: int, username: str = None):
+    text = (f"📋 НОВАЯ ЗАЯВКА\n\n"
+            f"👤 ID: {user_id}\n"
+            f"Username: @{username or 'нет'}")
+    kb = application_admin_keyboard(user_id)
+    for admin_id in ADMIN_IDS:
+        try:
+            bot.send_message(admin_id, text, reply_markup=kb)
+        except:
+            pass
+
+def product_info_text(product_key: str, product: dict) -> str:
+    stats = get_items_stats(product_key)
+    text  = f"📦 ТОВАР: {product['emoji']} {product['name']}\n\n"
+    text += f"🔑 Ключ: {product_key}\n"
+    text += f"💰 Цена: {product['price']}$\n"
+    text += f"📊 Остаток: {stats['free']} шт (всего: {stats['total']}, выдано: {stats['used']})\n"
+    text += f"📝 Описание: {product['description']}\n"
+    return text
+
 def get_display_stock(user_id: int, real_stock: int) -> int:
     if user_stock_cap.get(user_id, False):
         return min(real_stock, 24)
