@@ -491,13 +491,10 @@ def main_menu_keyboard(user_id=None):
     return kb
 
 def send_main_menu(message):
-    user_id = message.chat.id
-    text = (
-        f"👋 Привет, {message.chat.first_name}!\n\n"
-        f"💰 Баланс: {get_user_balance(user_id)}$\n\n"
-        f"Выберите раздел:"
-    )
-    bot.send_message(user_id, text, reply_markup=main_menu_keyboard(user_id))
+    user_id  = message.from_user.id
+    username = message.from_user.username
+    bot.send_message(user_id, get_profile_text(user_id, username),
+                     reply_markup=main_menu_keyboard(user_id), parse_mode="HTML")
 
 def catalog_keyboard():
     kb = InlineKeyboardMarkup(row_width=1)
