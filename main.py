@@ -125,6 +125,11 @@ def init_db():
                 user_id INTEGER PRIMARY KEY,
                 enabled INTEGER NOT NULL DEFAULT 0
             );
+
+            CREATE TABLE IF NOT EXISTS settings (
+                key   TEXT PRIMARY KEY,
+                value TEXT
+            );
         """)
         _conn.commit()
 
@@ -203,6 +208,16 @@ def set_udv_mode(user_id: int, enabled: bool):
     db_exec(
         "INSERT OR REPLACE INTO udv_mode (user_id, enabled) VALUES (?, ?)",
         (user_id, 1 if enabled else 0)
+    )
+
+def get_setting(key: str) -> str | None:
+    row = db_exec("SELECT value FROM settings WHERE key=?", (key,), fetchone=True)
+    return row["value"] if row else None
+
+def set_setting(key: str, value: str):
+    db_exec(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+        (key, value)
     )
 
 def create_application(user_id: int, username: str = None):
@@ -494,8 +509,14 @@ def send_main_menu(message):
     user_id    = message.from_user.id
     username   = message.from_user.username
     first_name = message.from_user.first_name
-    bot.send_message(user_id, get_profile_text(user_id, username, first_name),
-                     reply_markup=main_menu_keyboard(user_id), parse_mode="HTML")
+    text       = get_profile_text(user_id, username, first_name)
+    kb         = main_menu_keyboard(user_id)
+    photo_id   = get_setting("menu_photo_file_id")
+    if photo_id:
+        bot.send_photo(user_id, photo_id, caption=text,
+                       reply_markup=kb, parse_mode="HTML")
+    else:
+        bot.send_message(user_id, text, reply_markup=kb, parse_mode="HTML")
 
 def catalog_keyboard():
     kb = InlineKeyboardMarkup(row_width=2)
@@ -829,6 +850,28 @@ def admin_command(message):
             "5 — 📊 Статистика\n6 — ⚠️ Бан\n"
             "7 — 📋 Заявки\n\n━━━━━━━━━━━━━━━")
     bot.send_message(user_id, text, reply_markup=admin_keyboard())
+
+@bot.message_handler(commands=["addfileid"])
+def addfileid_command(message):
+    user_id = message.from_user.id
+    if not is_admin(user_id):
+        bot.send_message(user_id, "⛔ Нет доступа!")
+        return
+    user_states[user_id] = {"awaiting_menu_photo": True}
+    bot.send_message(user_id, "📸 Отправьте фото, которое будет показываться в главном меню.")
+
+@bot.message_handler(content_types=["photo"])
+def handle_photo(message):
+    user_id = message.from_user.id
+    state = user_states.get(user_id, {})
+    if state.get("awaiting_menu_photo"):
+        file_id = message.photo[-1].file_id
+        set_setting("menu_photo_file_id", file_id)
+        del user_states[user_id]
+        bot.send_message(
+            user_id,
+            f"✅ Фото сохранено! Теперь главное меню будет отправляться с этим изображением.\n\nfile_id: <code>{file_id}</code>",
+            parse_mode="HTML")
 
 @bot.message_handler(commands=["tall"])
 def tall_command(message):
