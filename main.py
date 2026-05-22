@@ -26,11 +26,11 @@ user_states = {}
 active_invoices = {}
 user_stock_cap = {}
 
-EMOJI_CATALOG   = "5445221832074483553"
-EMOJI_REFERRAL  = "5332724926216428039"
-EMOJI_SUPPORT   = "5201691993775818138"
-EMOJI_TERMS     = "5444856076954520455"
-EMOJI_BALANCE   = "5312123810638483121"
+EMOJI_CATALOG   = "6030776052345737530"
+EMOJI_REFERRAL  = "5258513401784573443"
+EMOJI_SUPPORT   = "5357069174512303778"
+EMOJI_TERMS     = "5258501105293205250"
+EMOJI_BALANCE   = "5258204546391351475"
 EMOJI_BACK      = "6039539366177541657"
 EMOJI_PAY       = "6030776052345737530"
 EMOJI_CANCEL    = "6039539366177541657"
@@ -42,7 +42,7 @@ EMOJI_BUY       = "5258185631355378853"
 EMOJI_DEPOSIT   = "6039496266180726678"
 EMOJI_CUSTOM    = "6039496266180726678"
 EMOJI_AGREE     = "6041720006973067267"
-
+EMOJI_COSTOMM = "5258215846450305872"
 _db_lock = threading.Lock()
 _conn: sqlite3.Connection = None
 
@@ -633,7 +633,7 @@ def terms_keyboard():
 def balance_info_keyboard():
     kb = InlineKeyboardMarkup(row_width=2)
     kb.row(
-        InlineKeyboardButton("💳 Пополнить", callback_data="deposit_menu"),
+        InlineKeyboardButton("Пополнить", callback_data="deposit_menu"),
         InlineKeyboardButton(" Назад", callback_data="back_to_menu",
                              icon_custom_emoji_id=EMOJI_BACK),
     )
@@ -654,7 +654,7 @@ def balance_keyboard():
         InlineKeyboardButton("250$", callback_data="deposit_250"),
     )
     kb.row(InlineKeyboardButton(" Другая сумма", callback_data="deposit_custom",
-                                icon_custom_emoji_id=EMOJI_CUSTOM))
+                                icon_custom_emoji_id=EMOJI_CUSTOMM))
     kb.row(InlineKeyboardButton(" Назад", callback_data="balance",
                                 icon_custom_emoji_id=EMOJI_BACK))
     return kb
@@ -793,7 +793,7 @@ def get_profile_text(user_id: int, username: str = None, first_name: str = None)
     text += f'├ <tg-emoji emoji-id="5323442290708985472">🎟</tg-emoji> User: @{username or "@none"}\n'
     text += f'├ <tg-emoji emoji-id="5258204546391351475">🎟</tg-emoji> Баланс: {balance}$\n'
     text += f'├ <tg-emoji emoji-id="5449407131675558756">🎟</tg-emoji> Куплено: {total_bought} акков\n'
-    text += f'├ <tg-emoji emoji-id="5906909964328245730">🎟</tg-emoji> В боте: {days_in_bot} дн.\n'
+    text += f'├ <tg-emoji emoji-id="6030776052345737530">🎟</tg-emoji> В боте: {days_in_bot} дн.\n'
     text += "╰─────────────────\n"
     return text
 
@@ -1036,7 +1036,7 @@ def callback_handler(call):
 
     elif data == "catalog":
         products = get_all_products()
-        text = "📦 КАТАЛОГ\n\n"
+        text = '<tg-emoji emoji-id="6030776052345737530">🎟</tg-emoji> Каталог\n\n'
         for key, p in products.items():
             display_stock = get_display_stock(user_id, p["stock"])
             stock_text = f"{display_stock} шт" if display_stock > 0 else "❌ Нет в наличии"
@@ -1067,7 +1067,7 @@ def callback_handler(call):
         refs = get_referrals(user_id)
         if not refs:
             edit_message(chat_id, message_id,
-                         " МОИ РЕФЕРАЛЫ\n\n👥 Пока никого нет\n\nПригласите друзей!",
+                         " МОИ РЕФЕРАЛЫ\n\n Пока никого нет\n\nПригласите друзей!",
                          my_referrals_keyboard(False))
         else:
             text = " МОИ РЕФЕРАЛЫ\n\n"
@@ -1135,19 +1135,19 @@ Web Token и JSON замене не подлежат если были рабо�
         u    = get_user(user_id)
         bal  = round(u["balance"], 2) if u else 0.0
         name = call.from_user.first_name or username or "Пользователь"
-        text  = "💰 БАЛАНС\n\n"
+        text  = "<tg-emoji emoji-id="5258204546391351475">🎟</tg-emoji> Баланс\n\n'
         text += "╭─────────────────\n"
-        text += f"├ 👤 Имя: {name}\n"
-        text += f"├ 🆔 ID: {user_id}\n"
-        text += f"├ 📎 Username: @{username or 'нет'}\n"
-        text += f"├ 💰 Баланс: {bal}$\n"
+        text += f'├ <tg-emoji emoji-id="5260399854500191689">🎟</tg-emoji> : {name}\n'
+        text += f'├ <tg-emoji emoji-id="5282843764451195532">🎟</tg-emoji> ID: {user_id}\n'
+        text += f'├ <tg-emoji emoji-id="5323442290708985472">🎟</tg-emoji> Username: @{username or 'нет'}\n'
+        text += f'├ <tg-emoji emoji-id="5258204546391351475">🎟</tg-emoji> Баланс: {bal}$\n'
         text += "╰─────────────────"
         edit_message(chat_id, message_id, text, balance_info_keyboard())
         bot.answer_callback_query(call.id)
 
     elif data == "deposit_menu":
         edit_message(chat_id, message_id,
-                     "💳 ПОПОЛНЕНИЕ\n\nВыберите сумму или введите свою:",
+                     "Пополнение\n\nВыберите сумму или введите свою:",
                      balance_keyboard())
         bot.answer_callback_query(call.id)
 
