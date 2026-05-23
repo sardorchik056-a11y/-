@@ -1378,13 +1378,20 @@ Web Token и JSON замене не подлежат если были рабо�
         if not items:
             bot.answer_callback_query(call.id, "❌ Контент для этого товара ещё не добавлен!", show_alert=True)
             return
-        bal     = get_user_balance(user_id)
-        max_qty = display_stock
-        text = (f"{product['emoji']} {product['name']} | {product['price']}$ за шт\n\n"
-                f"📦 В наличии: {display_stock} шт\n"
-                f" Ваш баланс: {bal}$\n\n"
-                f"━━━━━━━━━━━━━━━\n\n"
-                f"Введите количество (мин. 15):\n➡️ Например: 15")
+        bal  = get_user_balance(user_id)
+        line = "──────────────────"
+        text  = f"╭{line}╮\n"
+        text += f'│ {product["emoji"]} {product["name"]}\n'
+        text += f"├{line}┤\n"
+        text += f"│\n"
+        text += f"│ 💰 Цена: {product['price']}$ за шт\n"
+        text += f"│ 📦 В наличии: {display_stock} шт\n"
+        text += f"│ 💳 Ваш баланс: {bal}$\n"
+        text += f"│\n"
+        text += f"├{line}┤\n"
+        text += f"│ ✏️ Введите количество:\n"
+        text += f"│ ➡️ Минимум: 15 шт\n"
+        text += f"╰{line}╯"
         edit_message(chat_id, message_id, text, buy_product_keyboard())
         bot.answer_callback_query(call.id)
         user_states[user_id] = {
@@ -1943,35 +1950,112 @@ def handle_message(message):
             bot.send_message(user_id, f"❌ В наличии только {product['stock']} шт!")
             return
 
-        total_price  = round(product["price"] * quantity, 2)
-        bal          = get_user_balance(user_id)
-        insufficient = bal < total_price
+        total_price = round(product["price"] * quantity, 2)
+        bal         = get_user_balance(user_id)
 
-        confirm_text = (
-            f" Подтверждение!\n\n"
-            f'<b><tg-emoji emoji-id="6030776052345737530">🎟</tg-emoji>Товар: {product['emoji']} {product['name']}\n'
-            f'<tg-emoji emoji-id="6039496266180726678">🎟</tg-emoji>Количество: {quantity} шт\n'
-            f'<tg-emoji emoji-id="5904462880941545555">🎟</tg-emoji>Цена за шт: {product['price']}$\n'
-            f'<tg-emoji emoji-id="6030833407339008632">🎟</tg-emoji>Итого: {total_price}$\n'
-            f'<tg-emoji emoji-id="5258204546391351475">🎟</tg-emoji>Ваш баланс: {bal}$\n'
-            f'<tg-emoji emoji-id="5258204546391351475">🎟</tg-emoji>После покупки: {round(bal - total_price, 2)}$</b>\n\n'
+        if bal < total_price:
+            line = "──────────────────"
+            err  = f"╭{line}╮\n"
+            err += f"│ ❌ Недостаточно средств\n"
+            err += f"├{line}┤\n"
+            err += f"│ 💳 Ваш баланс: {bal}$\n"
+            err += f"│ 💰 Нужно: {total_price}$\n"
+            err += f"│ ➕ Не хватает: {round(total_price - bal, 2)}$\n"
+            err += f"╰{line}╯"
+            kb = InlineKeyboardMarkup(row_width=2)
+            kb.row(
+                InlineKeyboardButton(" Пополнить", callback_data="balance",
+                                     icon_custom_emoji_id=EMOJI_BALANCE),
+                InlineKeyboardButton(" Каталог",   callback_data="catalog",
+                                     icon_custom_emoji_id=EMOJI_BACK),
+            )
+            try:
+                if msg_id:
+                    bot.edit_message_text(err, chat_id=chat_id, message_id=msg_id,
+                                          reply_markup=kb, parse_mode="HTML")
+                else:
+                    bot.send_message(user_id, err, reply_markup=kb, parse_mode="HTML")
+            except:
+                bot.send_message(user_id, err, reply_markup=kb, parse_mode="HTML")
+            del user_states[user_id]
+            return
+
+        # Списываем деньги и делаем покупку
+        items = get_all_items(product_key)
+        if not items:
+            bot.send_message(user_id, "❌ Контент товара не настроен! Обратитесь в поддержку.")
+            del user_states[user_id]
+            return
+        if not deduct_balance(user_id, total_price):
+            bot.send_message(user_id, "❌ Ошибка списания!")
+            del user_states[user_id]
+            return
+
+        update_product_field(product_key, "stock", product["stock"] - quantity)
+        add_purchase(user_id, product_key, quantity, total_price)
+
+        u = get_user(user_id)
+        referrer_id = u["referrer_id"] if u else None
+        if referrer_id:
+            bonus = round(total_price * 0.1, 2)
+            add_referral_earning(referrer_id, bonus)
+            try:
+                bot.send_message(int(referrer_id),
+                    f"🎁 Ваш реферал купил {product['name']} x{quantity}!\n💰 Начислено: +{bonus}$")
+            except:
+                pass
+
+        for aid in ADMIN_IDS:
+            if is_udv_mode_enabled(aid):
+                continue
+            try:
+                bot.send_message(aid,
+                    f"🛒 НОВАЯ ПОКУПКА!\n\n👤 ID{user_id} @{username}\n"
+                    f"📦 {product['emoji']} {product['name']} x{quantity}\n💰 Сумма: {total_price}$")
+            except:
+                pass
+
+        last_purchase = db_exec(
+            "SELECT id FROM purchases WHERE user_id=? ORDER BY id DESC LIMIT 1",
+            (user_id,), fetchone=True
         )
-        if insufficient:
-            confirm_text += f"❌ Недостаточно средств! Нужно ещё {round(total_price - bal, 2)}$"
-        else:
-            confirm_text += "Подтвердить покупку?"
+        new_purchase_id = last_purchase["id"] if last_purchase else 0
+
+        line = "──────────────────"
+        result  = f"╭{line}╮\n"
+        result += f'│ <tg-emoji emoji-id="{EMOJI_DET_HEADER}">🎟</tg-emoji> {product["emoji"]} {product["name"]}\n'
+        result += f"├{line}┤\n"
+        result += f"│\n"
+        result += f'│ <tg-emoji emoji-id="{EMOJI_DET_PRICE}">🎟</tg-emoji> Сумма: {total_price}$\n'
+        result += f'│ <tg-emoji emoji-id="{EMOJI_DET_DATE}">🎟</tg-emoji> Количество: {quantity} шт\n'
+        result += f"│\n"
+        result += f"├{line}┤\n"
+        result += f'│ <tg-emoji emoji-id="{EMOJI_DET_WAYS}">🎟</tg-emoji> СПОСОБЫ ПОЛУЧЕНИЯ:\n'
+        result += f"╰{line}╯"
+
+        kb = InlineKeyboardMarkup(row_width=3)
+        kb.row(
+            InlineKeyboardButton(" QR",    callback_data=f"get_qr_{new_purchase_id}",
+                                 icon_custom_emoji_id=EMOJI_DET_QR),
+            InlineKeyboardButton(" KOD",   callback_data=f"get_kod_{new_purchase_id}",
+                                 icon_custom_emoji_id=EMOJI_DET_KOD),
+            InlineKeyboardButton(" TOKEN", callback_data=f"get_token_{new_purchase_id}",
+                                 icon_custom_emoji_id=EMOJI_DET_TOKEN),
+        )
+        kb.row(InlineKeyboardButton(
+            " Главное меню", callback_data="back_to_menu",
+            icon_custom_emoji_id=EMOJI_HOME
+        ))
 
         del user_states[user_id]
         try:
             if msg_id:
-                bot.edit_message_text(confirm_text, chat_id=chat_id, message_id=msg_id,
-                                      reply_markup=confirm_buy_keyboard(product_key, quantity, insufficient))
+                bot.edit_message_text(result, chat_id=chat_id, message_id=msg_id,
+                                      reply_markup=kb, parse_mode="HTML")
             else:
-                bot.send_message(user_id, confirm_text,
-                                 reply_markup=confirm_buy_keyboard(product_key, quantity, insufficient))
+                bot.send_message(user_id, result, reply_markup=kb, parse_mode="HTML")
         except:
-            bot.send_message(user_id, confirm_text,
-                             reply_markup=confirm_buy_keyboard(product_key, quantity, insufficient))
+            bot.send_message(user_id, result, reply_markup=kb, parse_mode="HTML")
         return
 
     if state.get("awaiting_custom_deposit"):
