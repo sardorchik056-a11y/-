@@ -1214,7 +1214,8 @@ def callback_handler(call):
         date_str   = str(purchase["purchased_at"])[:10]
         line = "──────────────────"
         text  = f"╭{line}╮\n"
-        text += f'│ <tg-emoji emoji-id="{EMOJI_DET_HEADER}">🎟</tg-emoji> {prod_name}\n'
+        prod_emoji = prod["emoji"] if prod else "📦"
+        text += f'│ {prod_emoji} {prod_name}\n'
         text += f"├{line}┤\n"
         text += f"│\n"
         text += f'│ <tg-emoji emoji-id="{EMOJI_DET_PRICE}">🎟</tg-emoji> Цена: {purchase["amount"]}$\n'
@@ -1463,7 +1464,7 @@ Web Token и JSON замене не подлежат если были рабо�
         # Показываем экран выбора способа получения
         line = "──────────────────"
         confirm_text  = f"╭{line}╮\n"
-        confirm_text += f'│ <tg-emoji emoji-id="{EMOJI_DET_HEADER}">🎟</tg-emoji> {product["emoji"]} {product["name"]}\n'
+        confirm_text += f'│ {product["emoji"]} {product["name"]}\n'
         confirm_text += f"├{line}┤\n"
         confirm_text += f"│\n"
         confirm_text += f'│ <tg-emoji emoji-id="{EMOJI_DET_PRICE}">🎟</tg-emoji> Сумма: {total_price}$\n'
@@ -2021,7 +2022,7 @@ def handle_message(message):
 
         line = "──────────────────"
         result  = f"╭{line}╮\n"
-        result += f'│ <tg-emoji emoji-id="{EMOJI_DET_HEADER}">🎟</tg-emoji> {product["emoji"]} {product["name"]}\n'
+        result += f'│ {product["emoji"]} {product["name"]}\n'
         result += f"├{line}┤\n"
         result += f"│\n"
         result += f'│ <tg-emoji emoji-id="{EMOJI_DET_PRICE}">🎟</tg-emoji> Сумма: {total_price}$\n'
