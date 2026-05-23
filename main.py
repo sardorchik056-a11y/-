@@ -138,11 +138,11 @@ def init_db():
             _conn.executemany(
                 "INSERT INTO products(product_key,name,emoji,price,stock,description) VALUES(?,?,?,?,?,?)",
                 [
-                    ("web_token", "Web Token", "🔑", 2.50, 0,
+                    ("web_token", "Web Token", "<tg-emoji emoji-id="5258503720928288433">🎟</tg-emoji>", 2.50, 0,
                      "Токен доступа, готов к использованию"),
-                    ("json",      "JSON",       "📄", 3.00, 0,
+                    ("json",      "JSON",       "<tg-emoji emoji-id="5258477770735885832">🎟</tg-emoji>", 3.00, 0,
                      "Полные данные в JSON формате"),
-                    ("autoreg",   "Авторег",    "🤖", 1.80, 0,
+                    ("autoreg",   "Авторег",    "<tg-emoji emoji-id="6030400221232501136">🎟</tg-emoji>", 1.80, 0,
                      "Аккаунт зарегистрированный на SIM"),
                 ]
             )
