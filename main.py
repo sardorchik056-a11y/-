@@ -840,22 +840,26 @@ def get_profile_text(user_id: int, username: str = None, first_name: str = None)
         days_in_bot = 0
     name = first_name or username or "Пользователь"
 
-    # Рейтинг: 10 блоков (8 заполненных, 2 пустых)
-    rating_filled = min(8, total_bought)
-    rating_bar = "■" * rating_filled + "□" * (10 - rating_filled)
+    # Рейтинг: 12 блоков (10 заполненных, 2 пустых — по умолчанию)
+    filled = min(10, total_bought)
+    rating_bar = "█" * filled + "□" * (12 - filled)
 
-    text  = f'╔ 💎 HER|SHOP  |  LVL 1  |  ТОРГОВЕЦ\n'
-    text += f'║\n'
-    text += f'║ 👤 {name}\n'
-    text += f'║ 🌐 {user_id}\n'
-    text += f'║ 🔗 @{username or "none"}\n'
-    text += f'║\n'
-    text += f'║ 💰 {balance:.2f}💎\n'
-    text += f'║ 🗂 {total_bought} акков куплено\n'
-    text += f'║ 👁 {days_in_bot} days в системе\n'
-    text += f'║\n'
-    text += f'║ 🏆 Рейтинг: {rating_bar}\n'
-    text += f'╚ 🟢 Статус: Active\n'
+    line = "──────────────────"
+    text  = f'╭{line}╮\n'
+    text += f'│ 💎 HER|SHOP  │  LVL 1  │  ТОРГОВЕЦ\n'
+    text += f'├{line}┤\n'
+    text += f'│\n'
+    text += f'│ 👤 {name}\n'
+    text += f'│ 🌐 {user_id}\n'
+    text += f'│ 🔗 @{username or "none"}\n'
+    text += f'│\n'
+    text += f'│ 💰 {balance:.2f} 💎\n'
+    text += f'│ 🗂 {total_bought} акков куплено\n'
+    text += f'│ 👁 {days_in_bot} days в системе\n'
+    text += f'│\n'
+    text += f'│ 🏆 Рейтинг: {rating_bar}\n'
+    text += f'│ 🟢 Статус: Active\n'
+    text += f'╰{line}╯\n'
     return text
 
 @bot.message_handler(commands=["start"])
