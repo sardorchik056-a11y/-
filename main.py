@@ -519,6 +519,16 @@ EMOJI_PUR_ITEM    = "5258503720928288433"   # Иконка каждой поку
 EMOJI_PUR_SHOP    = "5258477770735885832"   # Иконка кнопки В ШОП
 EMOJI_PUR_BACK    = "6039539366177541657"   # Иконка кнопки Назад
 
+# Айди кастомных эмодзи для детальной страницы покупки (замени на свои)
+EMOJI_DET_HEADER  = "ПОСТАВЬ_СВОЙ_ID"   # Иконка заголовка с названием товара
+EMOJI_DET_PRICE   = "ПОСТАВЬ_СВОЙ_ID"   # Иконка цены
+EMOJI_DET_DATE    = "ПОСТАВЬ_СВОЙ_ID"   # Иконка даты
+EMOJI_DET_WAYS    = "ПОСТАВЬ_СВОЙ_ID"   # Иконка "СПОСОБЫ ПОЛУЧЕНИЯ"
+EMOJI_DET_QR      = "ПОСТАВЬ_СВОЙ_ID"   # Иконка кнопки QR
+EMOJI_DET_KOD     = "ПОСТАВЬ_СВОЙ_ID"   # Иконка кнопки KOD
+EMOJI_DET_TOKEN   = "ПОСТАВЬ_СВОЙ_ID"   # Иконка кнопки TOKEN
+EMOJI_DET_BACK    = "ПОСТАВЬ_СВОЙ_ID"   # Иконка кнопки Назад к покупкам
+
 def main_menu_keyboard(user_id=None):
     kb = InlineKeyboardMarkup(row_width=2)
     kb.row(
@@ -1177,7 +1187,7 @@ def callback_handler(call):
             date_str  = str(p["purchased_at"])[:10]
             kb.row(InlineKeyboardButton(
                 f" {i} {prod_name} | {p['amount']}$ | {date_str}",
-                callback_data="noop",
+                callback_data=f"purchase_detail_{p['id']}",
                 icon_custom_emoji_id=EMOJI_PUR_ITEM
             ))
         kb.row(
@@ -1186,6 +1196,46 @@ def callback_handler(call):
             InlineKeyboardButton(" Назад", callback_data="back_to_menu",
                                  icon_custom_emoji_id=EMOJI_PUR_BACK),
         )
+        edit_message(chat_id, message_id, text, kb)
+        bot.answer_callback_query(call.id)
+
+    elif data.startswith("purchase_detail_"):
+        purchase_id = int(data[len("purchase_detail_"):])
+        # Найти покупку по id
+        purchase = db_exec(
+            "SELECT * FROM purchases WHERE id=? AND user_id=?",
+            (purchase_id, user_id), fetchone=True
+        )
+        if not purchase:
+            bot.answer_callback_query(call.id, "Покупка не найдена", show_alert=True)
+            return
+        prod = get_product(purchase["product_key"])
+        prod_name  = prod["name"] if prod else purchase["product_key"]
+        date_str   = str(purchase["purchased_at"])[:10]
+        line = "──────────────────"
+        text  = f"╭{line}╮\n"
+        text += f'│ <tg-emoji emoji-id="{EMOJI_DET_HEADER}">🎟</tg-emoji> {prod_name}\n'
+        text += f"├{line}┤\n"
+        text += f"│\n"
+        text += f'│ <tg-emoji emoji-id="{EMOJI_DET_PRICE}">🎟</tg-emoji> Цена: {purchase["amount"]}$\n'
+        text += f'│ <tg-emoji emoji-id="{EMOJI_DET_DATE}">🎟</tg-emoji> Дата: {date_str}\n'
+        text += f"│\n"
+        text += f"├{line}┤\n"
+        text += f'│ <tg-emoji emoji-id="{EMOJI_DET_WAYS}">🎟</tg-emoji> СПОСОБЫ ПОЛУЧЕНИЯ:\n'
+        text += f"╰{line}╯"
+        kb = InlineKeyboardMarkup(row_width=3)
+        kb.row(
+            InlineKeyboardButton(" QR",    callback_data=f"get_qr_{purchase_id}",
+                                 icon_custom_emoji_id=EMOJI_DET_QR),
+            InlineKeyboardButton(" KOD",   callback_data=f"get_kod_{purchase_id}",
+                                 icon_custom_emoji_id=EMOJI_DET_KOD),
+            InlineKeyboardButton(" TOKEN", callback_data=f"get_token_{purchase_id}",
+                                 icon_custom_emoji_id=EMOJI_DET_TOKEN),
+        )
+        kb.row(InlineKeyboardButton(
+            " Назад к покупкам", callback_data="my_purchases",
+            icon_custom_emoji_id=EMOJI_DET_BACK
+        ))
         edit_message(chat_id, message_id, text, kb)
         bot.answer_callback_query(call.id)
 
