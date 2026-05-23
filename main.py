@@ -1166,8 +1166,7 @@ def callback_handler(call):
         if not last_purchases:
             text += "│\n│ У вас пока нет покупок.\n│\n"
         else:
-            text += f"│ 📊 Всего: {total_qty} шт. | {total_amount}$\n"
-            text += f"│ ПОКАЗЫВАЕТ ПОСЛЕДНИЕ 50 покупок\n"
+            text += f'│ <tg-emoji emoji-id="5258330865674494479">🎟</tg-emoji> Всего: {total_qty} шт. | {total_amount}$\n'
         text += f"╰{line}╯"
 
         # Кнопки: каждая покупка отдельной строкой
