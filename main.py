@@ -503,6 +503,16 @@ EMOJI_BTN_DEPOSIT   = "5879814368572478751"   # Пополнить
 EMOJI_BTN_REF       = "5258513401784573443"   # Рефералка
 EMOJI_BTN_HELP      = "6035191085452497972"   # Help
 
+# Айди кастомных эмодзи для кнопок каталога (замени на свои)
+EMOJI_CAT_HEADER  = "ПОСТАВЬ_СВОЙ_ID"   # Иконка заголовка ВИТРИНА
+EMOJI_CAT_ITEM_1  = "ПОСТАВЬ_СВОЙ_ID"   # Иконка 1-го товара в кнопке
+EMOJI_CAT_ITEM_2  = "ПОСТАВЬ_СВОЙ_ID"   # Иконка 2-го товара в кнопке
+EMOJI_CAT_ITEM_3  = "ПОСТАВЬ_СВОЙ_ID"   # Иконка 3-го товара в кнопке
+EMOJI_CAT_DEPOSIT = "ПОСТАВЬ_СВОЙ_ID"   # Иконка кнопки Пополнить
+EMOJI_CAT_BACK    = "ПОСТАВЬ_СВОЙ_ID"   # Иконка кнопки Назад
+# Если товаров больше 3 — добавь EMOJI_CAT_ITEM_4 и т.д.
+CATALOG_ITEM_EMOJIS = [EMOJI_CAT_ITEM_1, EMOJI_CAT_ITEM_2, EMOJI_CAT_ITEM_3]
+
 def main_menu_keyboard(user_id=None):
     kb = InlineKeyboardMarkup(row_width=2)
     kb.row(
@@ -552,20 +562,23 @@ def send_main_menu(message):
             bot.send_message(user_id, text, reply_markup=kb, parse_mode="HTML")
 
 def catalog_keyboard():
-    kb = InlineKeyboardMarkup(row_width=2)
-    buttons = [
-        InlineKeyboardButton(
-            f"{p['emoji']} {p['name']} — {p['price']}$",
-            callback_data=f"buy_{key}"
-        )
-        for key, p in get_all_products().items()
-    ]
-    for i in range(0, len(buttons) - len(buttons) % 2, 2):
-        kb.row(buttons[i], buttons[i + 1])
-    if len(buttons) % 2 != 0:
-        kb.row(buttons[-1])
-    kb.row(InlineKeyboardButton(" Назад", callback_data="back_to_menu",
-                                icon_custom_emoji_id=EMOJI_BACK))
+    kb = InlineKeyboardMarkup(row_width=1)
+    products = list(get_all_products().items())
+    for i, (key, p) in enumerate(products):
+        emoji_id = CATALOG_ITEM_EMOJIS[i] if i < len(CATALOG_ITEM_EMOJIS) else EMOJI_CAT_ITEM_1
+        kb.row(InlineKeyboardButton(
+            f" {p['name']} | {p['price']}$",
+            callback_data=f"buy_{key}",
+            icon_custom_emoji_id=emoji_id
+        ))
+    kb.row(InlineKeyboardButton(
+        " Пополнить", callback_data="balance",
+        icon_custom_emoji_id=EMOJI_CAT_DEPOSIT
+    ))
+    kb.row(InlineKeyboardButton(
+        " Назад", callback_data="back_to_menu",
+        icon_custom_emoji_id=EMOJI_CAT_BACK
+    ))
     return kb
 
 def admin_keyboard():
@@ -1149,13 +1162,21 @@ def callback_handler(call):
 
     elif data == "catalog":
         products = get_all_products()
-        text = '<tg-emoji emoji-id="6030776052345737530">🎟</tg-emoji> Каталог\n\n'
+        line = "──────────────────"
+        text  = f"╭{line}╮\n"
+        text += f"│ 🛒 ВИТРИНА\n"
+        text += f"├{line}┤\n"
+        text += "│\n"
         for key, p in products.items():
             display_stock = get_display_stock(user_id, p["stock"])
-            stock_text = f"{display_stock} шт" if display_stock > 0 else "❌ Нет в наличии"
-            text += f"{p['emoji']} {p['name']} ({stock_text} | {p['price']}$)\n"
-            text += f"   └ {p['description']}\n\n"
-        text += "━━━━━━━━━━━━━━━\n\nНажмите на товар:"
+            stock_icon = "✅" if display_stock > 0 else "❌"
+            text += f"│ {p['emoji']} {p['name']}\n"
+            text += f"│ {stock_icon} {display_stock} шт.\n"
+            text += f"│ 💰 {p['price']}$\n"
+            text += "│\n"
+        text += f"├{line}┤\n"
+        text += f"│ 👇 Выбери товар\n"
+        text += f"╰{line}╯"
         edit_message(chat_id, message_id, text, catalog_keyboard())
         bot.answer_callback_query(call.id)
 
