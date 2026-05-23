@@ -513,6 +513,12 @@ EMOJI_CAT_BACK    = "6039539366177541657"   # Иконка кнопки Наза
 # Если товаров больше 3 — добавь EMOJI_CAT_ITEM_4 и т.д.
 CATALOG_ITEM_EMOJIS = [EMOJI_CAT_ITEM_1, EMOJI_CAT_ITEM_2, EMOJI_CAT_ITEM_3]
 
+# Айди кастомных эмодзи для раздела "Мои покупки" (замени на свои)
+EMOJI_PUR_HEADER  = "ПОСТАВЬ_СВОЙ_ID"   # Иконка заголовка МОИ ПОКУПКИ
+EMOJI_PUR_ITEM    = "ПОСТАВЬ_СВОЙ_ID"   # Иконка каждой покупки в кнопке
+EMOJI_PUR_SHOP    = "ПОСТАВЬ_СВОЙ_ID"   # Иконка кнопки В ШОП
+EMOJI_PUR_BACK    = "ПОСТАВЬ_СВОЙ_ID"   # Иконка кнопки Назад
+
 def main_menu_keyboard(user_id=None):
     kb = InlineKeyboardMarkup(row_width=2)
     kb.row(
@@ -1148,15 +1154,39 @@ def callback_handler(call):
 
     elif data == "my_purchases":
         purchases = get_user_purchases(user_id)
-        if not purchases:
-            text = "📋 Мои покупки\n\nУ вас пока нет покупок."
+        line = "──────────────────"
+        # Берём последние 50 покупок
+        last_purchases = list(purchases)[-50:]
+        total_qty    = sum(p["quantity"] for p in last_purchases)
+        total_amount = round(sum(p["amount"] for p in last_purchases), 2)
+
+        text  = f"╭{line}╮\n"
+        text += f'│ <tg-emoji emoji-id="{EMOJI_PUR_HEADER}">🎟</tg-emoji> МОИ ПОКУПКИ\n'
+        text += f"├{line}┤\n"
+        if not last_purchases:
+            text += "│\n│ У вас пока нет покупок.\n│\n"
         else:
-            text = "📋 Мои покупки\n\n"
-            for p in purchases:
-                text += f"🛍 {p['product_key']} × {p['quantity']} шт — {p['amount']}$\n"
-                text += f"   📅 {str(p['purchased_at'])[:16]}\n\n"
-        kb = InlineKeyboardMarkup()
-        kb.add(InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu"))
+            text += f"│ 📊 Всего: {total_qty} шт. | {total_amount}$\n"
+            text += f"│ ПОКАЗЫВАЕТ ПОСЛЕДНИЕ 50 покупок\n"
+        text += f"╰{line}╯"
+
+        # Кнопки: каждая покупка отдельной строкой
+        kb = InlineKeyboardMarkup(row_width=1)
+        for i, p in enumerate(last_purchases, 1):
+            prod = get_product(p["product_key"])
+            prod_name = prod["name"] if prod else p["product_key"]
+            date_str  = str(p["purchased_at"])[:10]
+            kb.row(InlineKeyboardButton(
+                f" {i} {prod_name} | {p['amount']}$ | {date_str}",
+                callback_data="noop",
+                icon_custom_emoji_id=EMOJI_PUR_ITEM
+            ))
+        kb.row(
+            InlineKeyboardButton(" В ШОП", callback_data="catalog",
+                                 icon_custom_emoji_id=EMOJI_PUR_SHOP),
+            InlineKeyboardButton(" Назад", callback_data="back_to_menu",
+                                 icon_custom_emoji_id=EMOJI_PUR_BACK),
+        )
         edit_message(chat_id, message_id, text, kb)
         bot.answer_callback_query(call.id)
 
