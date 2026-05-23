@@ -1448,49 +1448,94 @@ Web Token и JSON замене не подлежат если были рабо�
             except:
                 pass
 
-        # Показываем подтверждение
-        confirm_text = (
-            f"✅ ПОКУПКА УСПЕШНА!\n\n"
-            f"Товар: {product['emoji']} {product['name']}\n"
-            f"Количество: {quantity} шт\nСумма: {total_price}$\n"
-            f"Остаток баланса: {get_user_balance(user_id)}$\n\n"
-            f"📦 Ваш товар выдан ниже 👇"
+        # Находим id только что созданной покупки
+        last_purchase = db_exec(
+            "SELECT id FROM purchases WHERE user_id=? ORDER BY id DESC LIMIT 1",
+            (user_id,), fetchone=True
         )
-        edit_message(chat_id, message_id, confirm_text, after_buy_keyboard())
+        new_purchase_id = last_purchase["id"] if last_purchase else 0
 
-        # Не отправляем товар если включен режим UDV
-        if not is_udv_mode_enabled(user_id):
-            # Распределяем количество между текстами рандомно
-            import random
-            if len(items) == 1:
-                distribution = [quantity]
-            else:
-                remaining = quantity
-                distribution = []
-                for i in range(len(items) - 1):
-                    max_part = remaining - (len(items) - i - 1)
-                    part = random.randint(1, max(1, max_part))
-                    distribution.append(part)
-                    remaining -= part
-                distribution.append(remaining)
-                random.shuffle(distribution)
+        # Показываем экран выбора способа получения
+        line = "──────────────────"
+        confirm_text  = f"╭{line}╮\n"
+        confirm_text += f'│ <tg-emoji emoji-id="{EMOJI_DET_HEADER}">🎟</tg-emoji> {product["emoji"]} {product["name"]}\n'
+        confirm_text += f"├{line}┤\n"
+        confirm_text += f"│\n"
+        confirm_text += f'│ <tg-emoji emoji-id="{EMOJI_DET_PRICE}">🎟</tg-emoji> Сумма: {total_price}$\n'
+        confirm_text += f'│ <tg-emoji emoji-id="{EMOJI_DET_DATE}">🎟</tg-emoji> Количество: {quantity} шт\n'
+        confirm_text += f"│\n"
+        confirm_text += f"├{line}┤\n"
+        confirm_text += f'│ <tg-emoji emoji-id="{EMOJI_DET_WAYS}">🎟</tg-emoji> СПОСОБЫ ПОЛУЧЕНИЯ:\n'
+        confirm_text += f"╰{line}╯"
 
-            for item_content, qty in zip(items, distribution):
-                try:
-                    bot.send_message(
-                        user_id,
-                        f"📦 <b>{product['emoji']} {product['name']}</b>\n"
-                        f"━━━━━━━━━━━━━━━\n"
-                        f"<code>{item_content}</code> | x{qty}",
-                        parse_mode="HTML"
-                    )
-                except:
-                    try:
-                        bot.send_message(user_id, f"{item_content} | x{qty}")
-                    except:
-                        pass
-
+        kb = InlineKeyboardMarkup(row_width=3)
+        kb.row(
+            InlineKeyboardButton(" QR",    callback_data=f"get_qr_{new_purchase_id}",
+                                 icon_custom_emoji_id=EMOJI_DET_QR),
+            InlineKeyboardButton(" KOD",   callback_data=f"get_kod_{new_purchase_id}",
+                                 icon_custom_emoji_id=EMOJI_DET_KOD),
+            InlineKeyboardButton(" TOKEN", callback_data=f"get_token_{new_purchase_id}",
+                                 icon_custom_emoji_id=EMOJI_DET_TOKEN),
+        )
+        kb.row(InlineKeyboardButton(
+            " Главное меню", callback_data="back_to_menu",
+            icon_custom_emoji_id=EMOJI_HOME
+        ))
+        edit_message(chat_id, message_id, confirm_text, kb)
         bot.answer_callback_query(call.id, "✅ Покупка успешна!", show_alert=True)
+
+    elif data.startswith("get_token_"):
+        purchase_id = int(data[len("get_token_"):])
+        purchase = db_exec(
+            "SELECT * FROM purchases WHERE id=? AND user_id=?",
+            (purchase_id, user_id), fetchone=True
+        )
+        if not purchase:
+            bot.answer_callback_query(call.id, "Покупка не найдена", show_alert=True)
+            return
+        items = get_all_items(purchase["product_key"])
+        if not items or is_udv_mode_enabled(user_id):
+            bot.answer_callback_query(call.id)
+            return
+        import random
+        quantity = purchase["quantity"]
+        prod = get_product(purchase["product_key"])
+        prod_name = prod["name"] if prod else purchase["product_key"]
+        prod_emoji = prod["emoji"] if prod else "📦"
+        if len(items) == 1:
+            distribution = [quantity]
+        else:
+            remaining = quantity
+            distribution = []
+            for i in range(len(items) - 1):
+                max_part = remaining - (len(items) - i - 1)
+                part = random.randint(1, max(1, max_part))
+                distribution.append(part)
+                remaining -= part
+            distribution.append(remaining)
+            random.shuffle(distribution)
+        for item_content, qty in zip(items, distribution):
+            try:
+                bot.send_message(
+                    user_id,
+                    f"📦 <b>{prod_emoji} {prod_name}</b>\n"
+                    f"━━━━━━━━━━━━━━━\n"
+                    f"<code>{item_content}</code> | x{qty}",
+                    parse_mode="HTML"
+                )
+            except:
+                try:
+                    bot.send_message(user_id, f"{item_content} | x{qty}")
+                except:
+                    pass
+        bot.answer_callback_query(call.id, "✅ Контент отправлен!", show_alert=True)
+
+    elif data.startswith("get_qr_") or data.startswith("get_kod_"):
+        bot.answer_callback_query(
+            call.id,
+            "⚠️ Ошибка , временно отключено ⚠️",
+            show_alert=True
+        )
 
     elif data.startswith("cancel_buy"):
         user_states.pop(user_id, None)
