@@ -871,7 +871,7 @@ def get_profile_text(user_id: int, username: str = None, first_name: str = None)
 
     line = "──────────────────"
     text  = f'╭{line}╮\n'
-    text += f'│ <tg-emoji emoji-id="5454158795729029479">🎟</tg-emoji> HER|SHOP  │  LVL 1  │  ТОРГОВЕЦ\n'
+    text += f'│ <b><tg-emoji emoji-id="5454158795729029479">🎟</tg-emoji> HER|SHOP  │  LVL 1  │  ТОРГОВЕЦ\n'
     text += f'├{line}┤\n'
     text += f'│\n'
     text += f'│ <tg-emoji emoji-id="5454130320095862431">🎟</tg-emoji> {name}\n'
@@ -883,7 +883,7 @@ def get_profile_text(user_id: int, username: str = None, first_name: str = None)
     text += f'│ <tg-emoji emoji-id="5472213472441817609">🎟</tg-emoji> {days_in_bot} days в системе\n'
     text += f'│\n'
     text += f'│ <tg-emoji emoji-id="5460914671911460239">🎟</tg-emoji> Рейтинг: {rating_bar}\n'
-    text += f'│ <tg-emoji emoji-id="5416081784641168838">🎟</tg-emoji> Статус: Active\n'
+    text += f'│ <tg-emoji emoji-id="5416081784641168838">🎟</tg-emoji> Статус: Active</b>\n'
     text += f'╰{line}╯\n'
     return text
 
@@ -1164,18 +1164,18 @@ def callback_handler(call):
         products = get_all_products()
         line = "──────────────────"
         text  = f"╭{line}╮\n"
-        text += f"│ 🛒 ВИТРИНА\n"
+        text += f'│ <tg-emoji emoji-id="5188212140133080599">🎟</tg-emoji> ВИТРИНА\n'
         text += f"├{line}┤\n"
         text += "│\n"
         for key, p in products.items():
             display_stock = get_display_stock(user_id, p["stock"])
-            stock_icon = "✅" if display_stock > 0 else "❌"
+            stock_icon = '<tg-emoji emoji-id="5206607081334906820">🎟</tg-emoji>' if display_stock > 0 else '<tg-emoji emoji-id="5210952531676504517">🎟</tg-emoji>'
             text += f"│ {p['emoji']} {p['name']}\n"
             text += f"│ {stock_icon} {display_stock} шт.\n"
-            text += f"│ 💰 {p['price']}$\n"
+            text += f'│ <tg-emoji emoji-id="5199527184229751349">🎟</tg-emoji> {p['price']}$\n'
             text += "│\n"
         text += f"├{line}┤\n"
-        text += f"│ 👇 Выбери товар\n"
+        text += f'│ <tg-emoji emoji-id="5199934729381502417">🎟</tg-emoji> Выбери товар\n'
         text += f"╰{line}╯"
         edit_message(chat_id, message_id, text, catalog_keyboard())
         bot.answer_callback_query(call.id)
