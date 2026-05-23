@@ -514,10 +514,10 @@ EMOJI_CAT_BACK    = "6039539366177541657"   # Иконка кнопки Наза
 CATALOG_ITEM_EMOJIS = [EMOJI_CAT_ITEM_1, EMOJI_CAT_ITEM_2, EMOJI_CAT_ITEM_3]
 
 # Айди кастомных эмодзи для раздела "Мои покупки" (замени на свои)
-EMOJI_PUR_HEADER  = "ПОСТАВЬ_СВОЙ_ID"   # Иконка заголовка МОИ ПОКУПКИ
-EMOJI_PUR_ITEM    = "ПОСТАВЬ_СВОЙ_ID"   # Иконка каждой покупки в кнопке
-EMOJI_PUR_SHOP    = "ПОСТАВЬ_СВОЙ_ID"   # Иконка кнопки В ШОП
-EMOJI_PUR_BACK    = "ПОСТАВЬ_СВОЙ_ID"   # Иконка кнопки Назад
+EMOJI_PUR_HEADER  = "5258477770735885832"   # Иконка заголовка МОИ ПОКУПКИ
+EMOJI_PUR_ITEM    = "5258503720928288433"   # Иконка каждой покупки в кнопке
+EMOJI_PUR_SHOP    = "5258477770735885832"   # Иконка кнопки В ШОП
+EMOJI_PUR_BACK    = "6039539366177541657"   # Иконка кнопки Назад
 
 def main_menu_keyboard(user_id=None):
     kb = InlineKeyboardMarkup(row_width=2)
