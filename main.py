@@ -496,18 +496,30 @@ def oferta_keyboard():
     kb.add(InlineKeyboardButton("✅ Ознакомился", callback_data="oferta_acknowledged"))
     return kb
 
+# Айди кастомных эмодзи для кнопок главного меню
+EMOJI_BTN_SHOP      = "ПОСТАВЬ_СВОЙ_ID"   # Шоп
+EMOJI_BTN_PURCHASES = "ПОСТАВЬ_СВОЙ_ID"   # Мои покупки
+EMOJI_BTN_DEPOSIT   = "ПОСТАВЬ_СВОЙ_ID"   # Пополнить
+EMOJI_BTN_REF       = "ПОСТАВЬ_СВОЙ_ID"   # Рефералка
+EMOJI_BTN_HELP      = "ПОСТАВЬ_СВОЙ_ID"   # Help
+
 def main_menu_keyboard(user_id=None):
     kb = InlineKeyboardMarkup(row_width=2)
     kb.row(
-        InlineKeyboardButton("🛍 Шоп",        callback_data="catalog"),
-        InlineKeyboardButton("📋 Мои покупки", callback_data="my_purchases"),
+        InlineKeyboardButton(" Шоп",        callback_data="catalog",
+                             icon_custom_emoji_id=EMOJI_BTN_SHOP),
+        InlineKeyboardButton(" Мои покупки", callback_data="my_purchases",
+                             icon_custom_emoji_id=EMOJI_BTN_PURCHASES),
     )
     kb.row(
-        InlineKeyboardButton("💳 Пополнить",  callback_data="balance"),
-        InlineKeyboardButton("👥 Рефералка",  callback_data="referral"),
+        InlineKeyboardButton(" Пополнить",  callback_data="balance",
+                             icon_custom_emoji_id=EMOJI_BTN_DEPOSIT),
+        InlineKeyboardButton(" Рефералка",  callback_data="referral",
+                             icon_custom_emoji_id=EMOJI_BTN_REF),
     )
     kb.row(
-        InlineKeyboardButton("🆘 Help",       callback_data="support"),
+        InlineKeyboardButton(" Help",       callback_data="support",
+                             icon_custom_emoji_id=EMOJI_BTN_HELP),
     )
     return kb
 
