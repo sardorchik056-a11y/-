@@ -497,11 +497,11 @@ def oferta_keyboard():
     return kb
 
 # Айди кастомных эмодзи для кнопок главного меню
-EMOJI_BTN_SHOP      = "ПОСТАВЬ_СВОЙ_ID"   # Шоп
-EMOJI_BTN_PURCHASES = "ПОСТАВЬ_СВОЙ_ID"   # Мои покупки
-EMOJI_BTN_DEPOSIT   = "ПОСТАВЬ_СВОЙ_ID"   # Пополнить
-EMOJI_BTN_REF       = "ПОСТАВЬ_СВОЙ_ID"   # Рефералка
-EMOJI_BTN_HELP      = "ПОСТАВЬ_СВОЙ_ID"   # Help
+EMOJI_BTN_SHOP      = "5257965810634202885"   # Шоп
+EMOJI_BTN_PURCHASES = "5258134813302332906"   # Мои покупки
+EMOJI_BTN_DEPOSIT   = "5879814368572478751"   # Пополнить
+EMOJI_BTN_REF       = "5258513401784573443"   # Рефералка
+EMOJI_BTN_HELP      = "6035191085452497972"   # Help
 
 def main_menu_keyboard(user_id=None):
     kb = InlineKeyboardMarkup(row_width=2)
@@ -858,19 +858,19 @@ def get_profile_text(user_id: int, username: str = None, first_name: str = None)
 
     line = "──────────────────"
     text  = f'╭{line}╮\n'
-    text += f'│ 💎 HER|SHOP  │  LVL 1  │  ТОРГОВЕЦ\n'
+    text += f'│ <tg-emoji emoji-id="5454158795729029479">🎟</tg-emoji> HER|SHOP  │  LVL 1  │  ТОРГОВЕЦ\n'
     text += f'├{line}┤\n'
     text += f'│\n'
-    text += f'│ 👤 {name}\n'
-    text += f'│ 🌐 {user_id}\n'
-    text += f'│ 🔗 @{username or "none"}\n'
+    text += f'│ <tg-emoji emoji-id="5454130320095862431">🎟</tg-emoji> {name}\n'
+    text += f'│ <tg-emoji emoji-id="5456125594397856810">🎟</tg-emoji> {user_id}\n'
+    text += f'│ <tg-emoji emoji-id="5463216615468324631">🎟</tg-emoji> @{username or "none"}\n'
     text += f'│\n'
-    text += f'│ 💰 {balance:.2f} 💎\n'
-    text += f'│ 🗂 {total_bought} акков куплено\n'
-    text += f'│ 👁 {days_in_bot} days в системе\n'
+    text += f'│ <tg-emoji emoji-id="5199527184229751349">🎟</tg-emoji> {balance:.2f} <tg-emoji emoji-id="5406841020769936275">🎟</tg-emoji>\n'
+    text += f'│ <tg-emoji emoji-id="5467839602301623490">🎟</tg-emoji> {total_bought} акков куплено\n'
+    text += f'│ <tg-emoji emoji-id="5472213472441817609">🎟</tg-emoji> {days_in_bot} days в системе\n'
     text += f'│\n'
-    text += f'│ 🏆 Рейтинг: {rating_bar}\n'
-    text += f'│ 🟢 Статус: Active\n'
+    text += f'│ <tg-emoji emoji-id="5460914671911460239">🎟</tg-emoji> Рейтинг: {rating_bar}\n'
+    text += f'│ <tg-emoji emoji-id="5416081784641168838">🎟</tg-emoji> Статус: Active\n'
     text += f'╰{line}╯\n'
     return text
 
