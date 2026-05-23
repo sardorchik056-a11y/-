@@ -1187,7 +1187,7 @@ def callback_handler(call):
             date_str  = str(p["purchased_at"])[:10]
             kb.row(InlineKeyboardButton(
                 f" {i} {prod_name} | {p['amount']}$ | {date_str}",
-                callback_data=f"purchase_detail_{p['id']}",
+                callback_data="noop",
                 icon_custom_emoji_id=EMOJI_PUR_ITEM
             ))
         kb.row(
@@ -1378,7 +1378,6 @@ Web Token и JSON замене не подлежат если были рабо�
         if not items:
             bot.answer_callback_query(call.id, "❌ Контент для этого товара ещё не добавлен!", show_alert=True)
             return
-        bal  = get_user_balance(user_id)
         line = "──────────────────"
         text  = f"╭{line}╮\n"
         text += f'│ {product["emoji"]} {product["name"]}\n'
@@ -1386,7 +1385,6 @@ Web Token и JSON замене не подлежат если были рабо�
         text += f"│\n"
         text += f"│ 💰 Цена: {product['price']}$ за шт\n"
         text += f"│ 📦 В наличии: {display_stock} шт\n"
-        text += f"│ 💳 Ваш баланс: {bal}$\n"
         text += f"│\n"
         text += f"├{line}┤\n"
         text += f"│ ✏️ Введите количество:\n"
@@ -2048,13 +2046,17 @@ def handle_message(message):
         ))
 
         del user_states[user_id]
-        try:
-            if msg_id:
+        if msg_id:
+            try:
                 bot.edit_message_text(result, chat_id=chat_id, message_id=msg_id,
                                       reply_markup=kb, parse_mode="HTML")
-            else:
-                bot.send_message(user_id, result, reply_markup=kb, parse_mode="HTML")
-        except:
+            except:
+                try:
+                    bot.edit_message_caption(result, chat_id=chat_id, message_id=msg_id,
+                                             reply_markup=kb, parse_mode="HTML")
+                except:
+                    bot.send_message(user_id, result, reply_markup=kb, parse_mode="HTML")
+        else:
             bot.send_message(user_id, result, reply_markup=kb, parse_mode="HTML")
         return
 
