@@ -498,17 +498,16 @@ def oferta_keyboard():
 
 def main_menu_keyboard(user_id=None):
     kb = InlineKeyboardMarkup(row_width=2)
-    kb.add(
-        InlineKeyboardButton(" Каталог",     callback_data="catalog",
-                             icon_custom_emoji_id=EMOJI_CATALOG),
-        InlineKeyboardButton(" Реф. баланс", callback_data="referral",
-                             icon_custom_emoji_id=EMOJI_REFERRAL),
-        InlineKeyboardButton(" Поддержка",   callback_data="support",
-                             icon_custom_emoji_id=EMOJI_SUPPORT),
-        InlineKeyboardButton(" Оферта",      url="https://graph.org/PRAVILA-05-12-296",
-                             icon_custom_emoji_id=EMOJI_TERMS),
-        InlineKeyboardButton(" Баланс",      callback_data="balance",
-                             icon_custom_emoji_id=EMOJI_BALANCE),
+    kb.row(
+        InlineKeyboardButton("🛍 Шоп",        callback_data="catalog"),
+        InlineKeyboardButton("📋 Мои покупки", callback_data="my_purchases"),
+    )
+    kb.row(
+        InlineKeyboardButton("💳 Пополнить",  callback_data="balance"),
+        InlineKeyboardButton("👥 Рефералка",  callback_data="referral"),
+    )
+    kb.row(
+        InlineKeyboardButton("🆘 Help",       callback_data="support"),
     )
     return kb
 
@@ -518,12 +517,27 @@ def send_main_menu(message):
     first_name = message.from_user.first_name
     text       = get_profile_text(user_id, username, first_name)
     kb         = main_menu_keyboard(user_id)
-    photo_id   = get_setting("menu_photo_file_id")
-    if photo_id:
-        bot.send_photo(user_id, photo_id, caption=text,
+
+    # Пробуем получить фото профиля пользователя
+    profile_photo_id = None
+    try:
+        photos = bot.get_user_profile_photos(user_id, limit=1)
+        if photos and photos.total_count > 0:
+            profile_photo_id = photos.photos[0][-1].file_id
+    except:
+        pass
+
+    if profile_photo_id:
+        bot.send_photo(user_id, profile_photo_id, caption=text,
                        reply_markup=kb, parse_mode="HTML")
     else:
-        bot.send_message(user_id, text, reply_markup=kb, parse_mode="HTML")
+        # Фото нет — используем сохранённое фото меню (если есть)
+        photo_id = get_setting("menu_photo_file_id")
+        if photo_id:
+            bot.send_photo(user_id, photo_id, caption=text,
+                           reply_markup=kb, parse_mode="HTML")
+        else:
+            bot.send_message(user_id, text, reply_markup=kb, parse_mode="HTML")
 
 def catalog_keyboard():
     kb = InlineKeyboardMarkup(row_width=2)
@@ -825,14 +839,23 @@ def get_profile_text(user_id: int, username: str = None, first_name: str = None)
     except:
         days_in_bot = 0
     name = first_name or username or "Пользователь"
-    text  = "╭─────────────────\n"
-    text += f'├ <b><tg-emoji emoji-id="5260399854500191689">🎟</tg-emoji> : {name}\n'
-    text += f'├ <tg-emoji emoji-id="5282843764451195532">🎟</tg-emoji> ID: {user_id}\n'
-    text += f'├ <tg-emoji emoji-id="5323442290708985472">🎟</tg-emoji> User: @{username or "@none"}\n'
-    text += f'├ <tg-emoji emoji-id="5258204546391351475">🎟</tg-emoji> Баланс: {balance}$\n'
-    text += f'├ <tg-emoji emoji-id="5449407131675558756">🎟</tg-emoji> Куплено: {total_bought} акков\n'
-    text += f'├ <tg-emoji emoji-id="6030776052345737530">🎟</tg-emoji> В боте: {days_in_bot} дн.</b>\n'
-    text += "╰─────────────────\n"
+
+    # Рейтинг: 10 блоков (8 заполненных, 2 пустых)
+    rating_filled = min(8, total_bought)
+    rating_bar = "■" * rating_filled + "□" * (10 - rating_filled)
+
+    text  = f'╔ 💎 HER|SHOP  |  LVL 1  |  ТОРГОВЕЦ\n'
+    text += f'║\n'
+    text += f'║ 👤 {name}\n'
+    text += f'║ 🌐 {user_id}\n'
+    text += f'║ 🔗 @{username or "none"}\n'
+    text += f'║\n'
+    text += f'║ 💰 {balance:.2f}💎\n'
+    text += f'║ 🗂 {total_bought} акков куплено\n'
+    text += f'║ 👁 {days_in_bot} days в системе\n'
+    text += f'║\n'
+    text += f'║ 🏆 Рейтинг: {rating_bar}\n'
+    text += f'╚ 🟢 Статус: Active\n'
     return text
 
 @bot.message_handler(commands=["start"])
@@ -1092,6 +1115,20 @@ def callback_handler(call):
         edit_message(chat_id, message_id,
                      get_profile_text(user_id, username, call.from_user.first_name),
                      main_menu_keyboard(user_id))
+        bot.answer_callback_query(call.id)
+
+    elif data == "my_purchases":
+        purchases = get_user_purchases(user_id)
+        if not purchases:
+            text = "📋 Мои покупки\n\nУ вас пока нет покупок."
+        else:
+            text = "📋 Мои покупки\n\n"
+            for p in purchases:
+                text += f"🛍 {p['product_key']} × {p['quantity']} шт — {p['amount']}$\n"
+                text += f"   📅 {str(p['purchased_at'])[:16]}\n\n"
+        kb = InlineKeyboardMarkup()
+        kb.add(InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu"))
+        edit_message(chat_id, message_id, text, kb)
         bot.answer_callback_query(call.id)
 
     elif data == "catalog":
