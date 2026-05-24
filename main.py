@@ -1381,15 +1381,15 @@ Web Token и JSON замене не подлежат если были рабо�
             return
         line = "──────────────────"
         text  = f"╭{line}╮\n"
-        text += f'│ {product["emoji"]} {product["name"]}\n'
+        text += f'│ <b>{product["emoji"]} {product["name"]}\n'
         text += f"├{line}┤\n"
         text += f"│\n"
-        text += f"│ 💰 Цена: {product['price']}$ за шт\n"
-        text += f"│ 📦 В наличии: {display_stock} шт\n"
+        text += f'│ <tg-emoji emoji-id="5199527184229751349">🎟</tg-emoji> Цена: {product['price']}$ за шт\n'
+        text += f'│ <tg-emoji emoji-id="5226828629178080100">🎟</tg-emoji> В наличии: {display_stock} шт\n'
         text += f"│\n"
         text += f"├{line}┤\n"
-        text += f"│ ✏️ Введите количество:\n"
-        text += f"│ ➡️ Минимум: 15 шт\n"
+        text += f'│ <tg-emoji emoji-id="5190810548102516273">🎟</tg-emoji> Введите количество:\n'
+        text += f'│ <tg-emoji emoji-id="5226513232549664618">🎟</tg-emoji> Минимум: 15 шт</b>\n'
         text += f"╰{line}╯"
         edit_message(chat_id, message_id, text, buy_product_keyboard())
         bot.answer_callback_query(call.id)
