@@ -29,6 +29,9 @@ user_stock_cap = {}
 EMOJI_CATALOG   = "6030776052345737530"
 EMOJI_REFERRAL  = "5258513401784573443"
 EMOJI_SUPPORT   = "5357069174512303778"
+SUPPORT_USERNAME = "Qadwero"           # Юзернейм поддержки (без @)
+EMOJI_SUPPORT_CONTACT = "6039451237743595514"  # Кнопка Связаться с админом
+EMOJI_SUPPORT_BACK    = "6039539366177541657"  # Кнопка Назад в support
 EMOJI_TERMS     = "5258501105293205250"
 EMOJI_BALANCE   = "5258204546391351475"
 EMOJI_BACK      = "6039539366177541657"
@@ -699,22 +702,29 @@ def my_referrals_keyboard(has_referrals=False):
         kb.add(
             InlineKeyboardButton(" Моя ссылка",   callback_data="copy_ref_link",
                                  icon_custom_emoji_id=EMOJI_REF_LINK),
-            InlineKeyboardButton(" Главное меню", callback_data="back_to_menu",
-                                 icon_custom_emoji_id=EMOJI_DET_BACK),
+            InlineKeyboardButton(" Назад", callback_data="back_to_menu",
+                                 icon_custom_emoji_id=EMOJI_BACK),
         )
     else:
         kb.add(
             InlineKeyboardButton(" Пригласить ещё", callback_data="referral",
                                  icon_custom_emoji_id=EMOJI_INVITE),
-            InlineKeyboardButton(" Главное меню",   callback_data="back_to_menu",
-                                 icon_custom_emoji_id=EMOJI_DET_BACK),
+            InlineKeyboardButton(" Назад",          callback_data="back_to_menu",
+                                 icon_custom_emoji_id=EMOJI_BACK),
         )
     return kb
 
 def support_keyboard():
-    kb = InlineKeyboardMarkup()
-    kb.add(InlineKeyboardButton(" Назад", callback_data="back_to_menu",
-                                icon_custom_emoji_id=EMOJI_BACK))
+    kb = InlineKeyboardMarkup(row_width=1)
+    kb.row(InlineKeyboardButton(
+        " Связаться с админом",
+        url=f"https://t.me/{SUPPORT_USERNAME}",
+        icon_custom_emoji_id=EMOJI_SUPPORT_CONTACT
+    ))
+    kb.row(InlineKeyboardButton(
+        " Назад", callback_data="back_to_menu",
+        icon_custom_emoji_id=EMOJI_SUPPORT_BACK
+    ))
     return kb
 
 def terms_keyboard():
@@ -799,8 +809,8 @@ def after_buy_keyboard():
     kb.add(
         InlineKeyboardButton(" Поддержка",    callback_data="support",
                              icon_custom_emoji_id=EMOJI_SUPPORT),
-        InlineKeyboardButton(" Главное меню", callback_data="back_to_menu",
-                             icon_custom_emoji_id=EMOJI_HOME),
+        InlineKeyboardButton(" Назад", callback_data="back_to_menu",
+                             icon_custom_emoji_id=EMOJI_BACK),
     )
     return kb
 
@@ -809,8 +819,8 @@ def cancel_buy_keyboard():
     kb.add(
         InlineKeyboardButton(" Каталог",      callback_data="catalog",
                              icon_custom_emoji_id=EMOJI_CATALOG),
-        InlineKeyboardButton(" Главное меню", callback_data="back_to_menu",
-                             icon_custom_emoji_id=EMOJI_HOME),
+        InlineKeyboardButton(" Назад", callback_data="back_to_menu",
+                             icon_custom_emoji_id=EMOJI_BACK),
     )
     return kb
 
@@ -819,8 +829,8 @@ def cancel_payment_keyboard():
     kb.add(
         InlineKeyboardButton(" Баланс",       callback_data="balance",
                              icon_custom_emoji_id=EMOJI_BALANCE),
-        InlineKeyboardButton(" Главное меню", callback_data="back_to_menu",
-                             icon_custom_emoji_id=EMOJI_HOME),
+        InlineKeyboardButton(" Назад", callback_data="back_to_menu",
+                             icon_custom_emoji_id=EMOJI_BACK),
     )
     return kb
 
@@ -1336,9 +1346,16 @@ def callback_handler(call):
         bot.answer_callback_query(call.id, f"Ссылка: {ref_link}", show_alert=True)
 
     elif data == "support":
-        edit_message(chat_id, message_id,
-                     " ПОДДЕРЖКА\n\nСвяжитесь с нами: @Qadwero",
-                     support_keyboard())
+        line = "──────────────────"
+        text  = f"╭{line}╮\n"
+        text += f'│ <tg-emoji emoji-id="5199917240274673390">🎟</tg-emoji> SUPPORT\n'
+        text += f"├{line}┤\n"
+        text += f"│\n"
+        text += f'│ <tg-emoji emoji-id="5454130320095862431">🎟</tg-emoji> Админ: @{SUPPORT_USERNAME}\n'
+        text += f'│ <tg-emoji emoji-id="5258503720928288433">🎟</tg-emoji> Ответ: 10 мин - 24 часов\n'
+        text += f"│\n"
+        text += f"╰{line}╯"
+        edit_message(chat_id, message_id, text, support_keyboard())
         bot.answer_callback_query(call.id)
 
     elif data == "terms":
@@ -1534,8 +1551,8 @@ Web Token и JSON замене не подлежат если были рабо�
                                  icon_custom_emoji_id=EMOJI_DET_TOKEN),
         )
         kb.row(InlineKeyboardButton(
-            " Главное меню", callback_data="back_to_menu",
-            icon_custom_emoji_id=EMOJI_HOME
+            " Назад", callback_data="back_to_menu",
+            icon_custom_emoji_id=EMOJI_BACK
         ))
         edit_message(chat_id, message_id, confirm_text, kb)
         bot.answer_callback_query(call.id, "✅ Покупка успешна!", show_alert=True)
@@ -1595,8 +1612,8 @@ Web Token и JSON замене не подлежат если были рабо�
                                  icon_custom_emoji_id=EMOJI_DET_TOKEN),
         )
         dead_kb.row(InlineKeyboardButton(
-            " Главное меню", callback_data="back_to_menu",
-            icon_custom_emoji_id=EMOJI_HOME
+            " Назад", callback_data="back_to_menu",
+            icon_custom_emoji_id=EMOJI_BACK
         ))
         try:
             bot.edit_message_reply_markup(chat_id=chat_id, message_id=message_id,
@@ -2111,8 +2128,8 @@ def handle_message(message):
                                  icon_custom_emoji_id=EMOJI_DET_TOKEN),
         )
         kb.row(InlineKeyboardButton(
-            " Главное меню", callback_data="back_to_menu",
-            icon_custom_emoji_id=EMOJI_HOME
+            " Назад", callback_data="back_to_menu",
+            icon_custom_emoji_id=EMOJI_BACK
         ))
 
         del user_states[user_id]
