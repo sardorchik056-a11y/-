@@ -1288,7 +1288,7 @@ def callback_handler(call):
         text += f"│\n"
         text += f"├{line}┤\n"
         text += f"│\n"
-        text += f"│ <tg-emoji emoji-id="5188212140133080599">🎟</tg-emoji> Ставка: 10%\n"
+        text += f'│ <tg-emoji emoji-id="5188212140133080599">🎟</tg-emoji> Ставка: 10%\n'
         text += f"│ ┗ с каждой покупки\n"
         text += f"│ ┗ реферала\n"
         text += f"│\n"
