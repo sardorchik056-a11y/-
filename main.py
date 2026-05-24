@@ -38,6 +38,10 @@ EMOJI_REF_LINK  = "5260730055880876557"
 EMOJI_REF_STATS = "5258330865674494479"
 EMOJI_HOME      = "5260399854500191689"
 EMOJI_INVITE    = "5258513401784573443"
+
+# Айди эмодзи для кнопок рефералки (замени на свои)
+EMOJI_REF_COPY  = "5463216615468324631"   # Кнопка скопировать ссылку
+EMOJI_REF_BACK  = "6039539366177541657"   # Кнопка назад
 EMOJI_BUY       = "5258185631355378853"
 EMOJI_DEPOSIT   = "6039496266180726678"
 EMOJI_CUSTOM    = "6039496266180726678"
@@ -668,15 +672,15 @@ def admin_deposits_keyboard():
     return kb
 
 def referral_keyboard():
-    kb = InlineKeyboardMarkup(row_width=2)
-    kb.add(
-        InlineKeyboardButton(" Моя ссылка",   callback_data="copy_ref_link",
-                             icon_custom_emoji_id=EMOJI_REF_LINK),
-        InlineKeyboardButton(" Мои рефералы", callback_data="my_referrals",
-                             icon_custom_emoji_id=EMOJI_REF_STATS),
-        InlineKeyboardButton(" Главное меню", callback_data="back_to_menu",
-                             icon_custom_emoji_id=EMOJI_DET_BACK),
-    )
+    kb = InlineKeyboardMarkup(row_width=1)
+    kb.row(InlineKeyboardButton(
+        " Нажми чтобы скопировать", callback_data="copy_ref_link",
+        icon_custom_emoji_id=EMOJI_REF_COPY
+    ))
+    kb.row(InlineKeyboardButton(
+        " Назад", callback_data="back_to_menu",
+        icon_custom_emoji_id=EMOJI_REF_BACK
+    ))
     return kb
 
 def my_referrals_keyboard(has_referrals=False):
@@ -1267,13 +1271,28 @@ def callback_handler(call):
         refs         = get_referrals(user_id)
         ref_earn     = u["referral_earnings"] if u else 0
         bal          = u["balance"] if u else 0
-        text  = '<tg-emoji emoji-id="5258513401784573443">🎟</tg-emoji> РЕФЕРАЛЬНАЯ ПРОГРАММА\n\n'
-        text += f"Ваша реферальная ссылка:\n<code>{ref_link}</code>\n\n"
-        text += "━━━━━━━━━━━━━━━\n\n"
-        text += f'<tg-emoji emoji-id="5258513401784573443">🎟</tg-emoji> Приглашено: {len(refs)}\n'
-        text += f'<tg-emoji emoji-id="5890848474563352982">🎟</tg-emoji> Заработано: {ref_earn}$\n'
-        text += f'<tg-emoji emoji-id="5258204546391351475">🎟</tg-emoji> Баланс: {round(bal,2)}$\n\n'
-        text += "━━━━━━━━━━━━━━━\n\n За каждую покупку реферала вы получаете 10%."
+        line = "──────────────────"
+        bot_username = bot_username  # уже получен выше
+        text  = f"╭{line}╮\n"
+        text += f'│ <tg-emoji emoji-id="5258513401784573443">🎟</tg-emoji> РЕФЕРАЛКА\n'
+        text += f"├{line}┤\n"
+        text += f"│\n"
+        text += f'│ <tg-emoji emoji-id="5463216615468324631">🎟</tg-emoji> Твоя ссылка:\n'
+        text += f"│ ┗ <code>{ref_link}</code>\n"
+        text += f"│\n"
+        text += f"├{line}┤\n"
+        text += f"│\n"
+        text += f'│ <tg-emoji emoji-id="5258513401784573443">🎟</tg-emoji> Приглашено: {len(refs)}\n'
+        text += f'│ <tg-emoji emoji-id="5199527184229751349">🎟</tg-emoji> Заработано: {ref_earn:.2f}$\n'
+        text += f'│ <tg-emoji emoji-id="5454158795729029479">🎟</tg-emoji> В балансе: {round(bal,2)}$\n'
+        text += f"│\n"
+        text += f"├{line}┤\n"
+        text += f"│\n"
+        text += f"│ <tg-emoji emoji-id="5188212140133080599">🎟</tg-emoji> Ставка: 10%\n"
+        text += f"│ ┗ с каждой покупки\n"
+        text += f"│ ┗ реферала\n"
+        text += f"│\n"
+        text += f"╰{line}╯"
         edit_message(chat_id, message_id, text, referral_keyboard())
         bot.answer_callback_query(call.id)
 
@@ -1534,6 +1553,22 @@ Web Token и JSON замене не подлежат если были рабо�
                     bot.send_message(user_id, f"{item_content} | x{qty}")
                 except:
                     pass
+        # Делаем кнопки мёртвыми — только Назад остаётся
+        dead_kb = InlineKeyboardMarkup(row_width=3)
+        dead_kb.row(
+            InlineKeyboardButton("✅ QR",    callback_data="noop"),
+            InlineKeyboardButton("✅ KOD",   callback_data="noop"),
+            InlineKeyboardButton("✅ TOKEN", callback_data="noop"),
+        )
+        dead_kb.row(InlineKeyboardButton(
+            " Главное меню", callback_data="back_to_menu",
+            icon_custom_emoji_id=EMOJI_HOME
+        ))
+        try:
+            bot.edit_message_reply_markup(chat_id=chat_id, message_id=message_id,
+                                          reply_markup=dead_kb)
+        except:
+            pass
         bot.answer_callback_query(call.id, "✅ Контент отправлен!", show_alert=True)
 
     elif data.startswith("get_qr_") or data.startswith("get_kod_"):
