@@ -456,7 +456,8 @@ def payment_watcher():
                         try:
                             bot.send_message(int(referrer_id),
                                 f"🎁 Ваш реферал пополнил баланс на {amount}$!\n"
-                                f"💰 Вам начислено: +{bonus}$")
+                                f"💰 Вам начислено: +{bonus}$",
+                                parse_mode="HTML")
                         except:
                             pass
 
@@ -880,7 +881,7 @@ def notify_admins_about_application(user_id: int, username: str = None):
     kb = application_admin_keyboard(user_id)
     for admin_id in ADMIN_IDS:
         try:
-            bot.send_message(admin_id, text, reply_markup=kb)
+            bot.send_message(admin_id, text, reply_markup=kb, parse_mode="HTML")
         except:
             pass
 
@@ -962,7 +963,7 @@ def admin_command(message):
             "3 — 💰 Пополнения\n4 — 📢 Рассылка\n"
             "5 — 📊 Статистика\n6 — ⚠️ Бан\n"
             "7 — 📋 Заявки\n\n━━━━━━━━━━━━━━━")
-    bot.send_message(user_id, text, reply_markup=admin_keyboard())
+    bot.send_message(user_id, text, reply_markup=admin_keyboard(), parse_mode="HTML")
 
 @bot.message_handler(commands=["addfileid"])
 def addfileid_command(message):
@@ -1006,7 +1007,8 @@ def tall_command(message):
         try:
             bot.send_message(uid,
                 "✅ Ваша заявка одобрена!\n\n"
-                "Добро пожаловать! Теперь у вас есть полный доступ к боту.")
+                "Добро пожаловать! Теперь у вас есть полный доступ к боту.",
+                parse_mode="HTML")
         except:
             pass
     bot.send_message(user_id, f"✅ Принято заявок: {count}")
@@ -1030,7 +1032,8 @@ def call_command(message):
         try:
             bot.send_message(uid,
                 "❌ Ваша заявка отклонена.\n\n"
-                "Обратитесь в поддержку для уточнения причины.")
+                "Обратитесь в поддержку для уточнения причины.",
+                parse_mode="HTML")
         except:
             pass
     bot.send_message(user_id, f"❌ Отклонено заявок: {count}")
@@ -1077,7 +1080,7 @@ def showb_command(message):
         text += "Пока нет данных\n"
 
     text += "\n━━━━━━━━━━━━━━━"
-    bot.send_message(user_id, text)
+    bot.send_message(user_id, text, parse_mode="HTML")
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
@@ -1148,7 +1151,8 @@ def callback_handler(call):
         try:
             bot.send_message(target_id,
                 "✅ Ваша заявка одобрена!\n\n"
-                "Добро пожаловать! Теперь у вас есть полный доступ к боту.")
+                "Добро пожаловать! Теперь у вас есть полный доступ к боту.",
+                parse_mode="HTML")
         except:
             pass
         bot.answer_callback_query(call.id, "✅ Принято!")
@@ -1172,7 +1176,8 @@ def callback_handler(call):
         try:
             bot.send_message(target_id,
                 "❌ Ваша заявка отклонена.\n\n"
-                "Обратитесь в поддержку для уточнения причины.")
+                "Обратитесь в поддержку для уточнения причины.",
+                parse_mode="HTML")
         except:
             pass
         bot.answer_callback_query(call.id, "❌ Отклонено!")
@@ -1506,7 +1511,8 @@ Web Token и JSON замене не подлежат если были рабо�
             add_referral_earning(referrer_id, bonus)
             try:
                 bot.send_message(int(referrer_id),
-                    f"🎁 Ваш реферал купил {product['name']} x{quantity}!\n💰 Начислено: +{bonus}$")
+                    f"🎁 Ваш реферал купил {product['name']} x{quantity}!\n💰 Начислено: +{bonus}$",
+                    parse_mode="HTML")
             except:
                 pass
 
@@ -1517,7 +1523,8 @@ Web Token и JSON замене не подлежат если были рабо�
             try:
                 bot.send_message(aid,
                     f"🛒 НОВАЯ ПОКУПКА!\n\n👤 ID{user_id} @{username}\n"
-                    f"📦 {product['emoji']} {product['name']} x{quantity}\n💰 Сумма: {total_price}$")
+                    f"📦 {product['emoji']} {product['name']} x{quantity}\n💰 Сумма: {total_price}$",
+                    parse_mode="HTML")
             except:
                 pass
 
@@ -1812,7 +1819,8 @@ Web Token и JSON замене не подлежат если были рабо�
         p = get_product(product_key)
         bot.send_message(user_id,
             f"💰 ИЗМЕНИТЬ ЦЕНУ\n\nТовар: {p['emoji']} {p['name']}\n"
-            f"Текущая цена: {p['price']}$\n\nВведите новую цену (например: 3.50):")
+            f"Текущая цена: {p['price']}$\n\nВведите новую цену (например: 3.50):",
+            parse_mode="HTML")
         user_states[user_id] = {"prod_setprice": product_key,
                                 "chat_id": chat_id, "message_id": message_id}
         bot.answer_callback_query(call.id)
@@ -1822,7 +1830,8 @@ Web Token и JSON замене не подлежат если были рабо�
         product_key = data[len("prod_setname_"):]
         p = get_product(product_key)
         bot.send_message(user_id,
-            f"✏️ ИЗМЕНИТЬ НАЗВАНИЕ\n\nТовар: {p['emoji']} {p['name']}\n\nВведите новое название:")
+            f"✏️ ИЗМЕНИТЬ НАЗВАНИЕ\n\nТовар: {p['emoji']} {p['name']}\n\nВведите новое название:",
+            parse_mode="HTML")
         user_states[user_id] = {"prod_setname": product_key,
                                 "chat_id": chat_id, "message_id": message_id}
         bot.answer_callback_query(call.id)
@@ -1833,7 +1842,8 @@ Web Token и JSON замене не подлежат если были рабо�
         p = get_product(product_key)
         bot.send_message(user_id,
             f"📝 ИЗМЕНИТЬ ОПИСАНИЕ\n\nТовар: {p['emoji']} {p['name']}\n"
-            f"Текущее: {p['description']}\n\nВведите новое описание:")
+            f"Текущее: {p['description']}\n\nВведите новое описание:",
+            parse_mode="HTML")
         user_states[user_id] = {"prod_setdesc": product_key,
                                 "chat_id": chat_id, "message_id": message_id}
         bot.answer_callback_query(call.id)
@@ -1843,7 +1853,8 @@ Web Token и JSON замене не подлежат если были рабо�
         product_key = data[len("prod_setemoji_"):]
         p = get_product(product_key)
         bot.send_message(user_id,
-            f"🎭 ИЗМЕНИТЬ ЭМОДЗИ\n\nТовар: {p['emoji']} {p['name']}\n\nВведите новый эмодзи:")
+            f"🎭 ИЗМЕНИТЬ ЭМОДЗИ\n\nТовар: {p['emoji']} {p['name']}\n\nВведите новый эмодзи:",
+            parse_mode="HTML")
         user_states[user_id] = {"prod_setemoji": product_key,
                                 "chat_id": chat_id, "message_id": message_id}
         bot.answer_callback_query(call.id)
@@ -2372,7 +2383,8 @@ def handle_message(message):
             try:
                 bot.send_message(target_id,
                     f"💰 Вам зачислено {amount}$!\n"
-                    f"Текущий баланс: {get_user_balance(target_id)}$")
+                    f"Текущий баланс: {get_user_balance(target_id)}$",
+                    parse_mode="HTML")
             except: pass
         except Exception as e:
             bot.send_message(user_id, f"❌ Ошибка: {e}\n\nФормат: ID|сумма")
@@ -2386,7 +2398,7 @@ def handle_message(message):
         bot.send_message(user_id, "📢 Рассылка начата...")
         for u in users:
             try:
-                bot.send_message(u["user_id"], f"📢 РАССЫЛКА\n\n{text}")
+                bot.send_message(u["user_id"], f"📢 РАССЫЛКА\n\n{text}", parse_mode="HTML")
                 ok += 1
                 time.sleep(0.05)
             except:
