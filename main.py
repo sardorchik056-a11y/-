@@ -47,6 +47,16 @@ EMOJI_DEPOSIT   = "6039496266180726678"
 EMOJI_CUSTOM    = "6039496266180726678"
 EMOJI_AGREE     = "6041720006973067267"
 EMOJI_CUSTOMM = "5258215846450305872"
+
+# Айди эмодзи для кнопок пополнения (замени на свои)
+EMOJI_DEP_5    = "5454060067315801997"
+EMOJI_DEP_10   = "5454060067315801997"
+EMOJI_DEP_25   = "5454060067315801997"
+EMOJI_DEP_50   = "5454060067315801997"
+EMOJI_DEP_100  = "5454060067315801997"
+EMOJI_DEP_250  = "5454060067315801997"
+EMOJI_DEP_CUSTOM = "5197434882321567830"  # Своя сумма
+EMOJI_DEP_BACK   = "6039539366177541657"  # Назад
 _db_lock = threading.Lock()
 _conn: sqlite3.Connection = None
 
@@ -727,23 +737,27 @@ def balance_info_keyboard():
     return kb
 
 def balance_keyboard():
-    kb = InlineKeyboardMarkup(row_width=2)
+    kb = InlineKeyboardMarkup(row_width=3)
     kb.row(
-        InlineKeyboardButton("5$",  callback_data="deposit_5"),
-        InlineKeyboardButton("10$", callback_data="deposit_10"),
+        InlineKeyboardButton(" 5$",   callback_data="deposit_5",
+                             icon_custom_emoji_id=EMOJI_DEP_5),
+        InlineKeyboardButton(" 10$",  callback_data="deposit_10",
+                             icon_custom_emoji_id=EMOJI_DEP_10),
+        InlineKeyboardButton(" 25$",  callback_data="deposit_25",
+                             icon_custom_emoji_id=EMOJI_DEP_25),
     )
     kb.row(
-        InlineKeyboardButton("25$", callback_data="deposit_25"),
-        InlineKeyboardButton("50$", callback_data="deposit_50"),
+        InlineKeyboardButton(" 50$",  callback_data="deposit_50",
+                             icon_custom_emoji_id=EMOJI_DEP_50),
+        InlineKeyboardButton(" 100$", callback_data="deposit_100",
+                             icon_custom_emoji_id=EMOJI_DEP_100),
+        InlineKeyboardButton(" 250$", callback_data="deposit_250",
+                             icon_custom_emoji_id=EMOJI_DEP_250),
     )
-    kb.row(
-        InlineKeyboardButton("100$", callback_data="deposit_100"),
-        InlineKeyboardButton("250$", callback_data="deposit_250"),
-    )
-    kb.row(InlineKeyboardButton(" Другая сумма", callback_data="deposit_custom",
-                                icon_custom_emoji_id=EMOJI_CUSTOMM))
-    kb.row(InlineKeyboardButton(" Назад", callback_data="balance",
-                                icon_custom_emoji_id=EMOJI_BACK))
+    kb.row(InlineKeyboardButton(" Своя сумма", callback_data="deposit_custom",
+                                icon_custom_emoji_id=EMOJI_DEP_CUSTOM))
+    kb.row(InlineKeyboardButton(" Назад", callback_data="back_to_menu",
+                                icon_custom_emoji_id=EMOJI_DEP_BACK))
     return kb
 
 def payment_keyboard(invoice_url: str):
@@ -1274,7 +1288,7 @@ def callback_handler(call):
         line = "──────────────────"
         bot_username = bot_username  # уже получен выше
         text  = f"╭{line}╮\n"
-        text += f'│ <tg-emoji emoji-id="5258513401784573443">🎟</tg-emoji> РЕФЕРАЛКА\n'
+        text += f'│ <b><tg-emoji emoji-id="5258513401784573443">🎟</tg-emoji> РЕФЕРАЛКА\n'
         text += f"├{line}┤\n"
         text += f"│\n"
         text += f'│ <tg-emoji emoji-id="5463216615468324631">🎟</tg-emoji> Твоя ссылка:\n'
@@ -1290,7 +1304,7 @@ def callback_handler(call):
         text += f"│\n"
         text += f'│ <tg-emoji emoji-id="5188212140133080599">🎟</tg-emoji> Ставка: 10%\n'
         text += f"│ ┗ с каждой покупки\n"
-        text += f"│ ┗ реферала\n"
+        text += f"│ ┗ реферала</b>\n"
         text += f"│\n"
         text += f"╰{line}╯"
         edit_message(chat_id, message_id, text, referral_keyboard())
@@ -1368,20 +1382,37 @@ Web Token и JSON замене не подлежат если были рабо�
         u    = get_user(user_id)
         bal  = round(u["balance"], 2) if u else 0.0
         name = call.from_user.first_name or username or "Пользователь"
-        text  = '<tg-emoji emoji-id="5258204546391351475">🎟</tg-emoji> Баланс\n\n'
-        text += "╭─────────────────\n"
-        text += f'├ <tg-emoji emoji-id="5260399854500191689">🎟</tg-emoji> : {name}\n'
-        text += f'├ <tg-emoji emoji-id="5282843764451195532">🎟</tg-emoji> ID: {user_id}\n'
-        text += f'├ <tg-emoji emoji-id="5323442290708985472">🎟</tg-emoji> Username: @{username or 'нет'}\n'
-        text += f'├ <tg-emoji emoji-id="5258204546391351475">🎟</tg-emoji> Баланс: {bal}$\n'
-        text += "╰─────────────────"
-        edit_message(chat_id, message_id, text, balance_info_keyboard())
+        line = "──────────────────"
+        text  = f"╭{line}╮\n"
+        text += f'│ <b><tg-emoji emoji-id="5199527184229751349">🎟</tg-emoji> ПОПОЛНЕНИЕ\n'
+        text += f"├{line}┤\n"
+        text += f"│\n"
+        text += f'│ <tg-emoji emoji-id="5454158795729029479">🎟</tg-emoji> Твой баланс: {bal}$\n'
+        text += f"│\n"
+        text += f"├{line}┤\n"
+        text += f"│\n"
+        text += f'│ <tg-emoji emoji-id="5454060067315801997">🎟</tg-emoji> Выбери сумму:</b>\n'
+        text += f"│\n"
+        text += f"╰{line}╯"
+        edit_message(chat_id, message_id, text, balance_keyboard())
         bot.answer_callback_query(call.id)
 
     elif data == "deposit_menu":
-        edit_message(chat_id, message_id,
-                     "Пополнение\n\nВыберите сумму или введите свою:",
-                     balance_keyboard())
+        u   = get_user(user_id)
+        bal = round(u["balance"], 2) if u else 0.0
+        line = "──────────────────"
+        text  = f"╭{line}╮\n"
+        text += f"│ 💰 ПОПОЛНЕНИЕ\n"
+        text += f"├{line}┤\n"
+        text += f"│\n"
+        text += f"│ 💎 Твой баланс: {bal}$\n"
+        text += f"│\n"
+        text += f"├{line}┤\n"
+        text += f"│\n"
+        text += f"│ 🔽 Выбери сумму:\n"
+        text += f"│\n"
+        text += f"╰{line}╯"
+        edit_message(chat_id, message_id, text, balance_keyboard())
         bot.answer_callback_query(call.id)
 
     elif data.startswith("buy_"):
@@ -1556,9 +1587,12 @@ Web Token и JSON замене не подлежат если были рабо�
         # Делаем кнопки мёртвыми — только Назад остаётся
         dead_kb = InlineKeyboardMarkup(row_width=3)
         dead_kb.row(
-            InlineKeyboardButton("✅ QR",    callback_data="noop"),
-            InlineKeyboardButton("✅ KOD",   callback_data="noop"),
-            InlineKeyboardButton("✅ TOKEN", callback_data="noop"),
+            InlineKeyboardButton(" QR",    callback_data="noop",
+                                 icon_custom_emoji_id=EMOJI_DET_QR),
+            InlineKeyboardButton(" KOD",   callback_data="noop",
+                                 icon_custom_emoji_id=EMOJI_DET_KOD),
+            InlineKeyboardButton(" TOKEN", callback_data="noop",
+                                 icon_custom_emoji_id=EMOJI_DET_TOKEN),
         )
         dead_kb.row(InlineKeyboardButton(
             " Главное меню", callback_data="back_to_menu",
