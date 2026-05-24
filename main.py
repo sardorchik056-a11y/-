@@ -675,7 +675,7 @@ def referral_keyboard():
         InlineKeyboardButton(" Мои рефералы", callback_data="my_referrals",
                              icon_custom_emoji_id=EMOJI_REF_STATS),
         InlineKeyboardButton(" Главное меню", callback_data="back_to_menu",
-                             icon_custom_emoji_id=EMOJI_HOME),
+                             icon_custom_emoji_id=EMOJI_DET_BACK),
     )
     return kb
 
@@ -686,14 +686,14 @@ def my_referrals_keyboard(has_referrals=False):
             InlineKeyboardButton(" Моя ссылка",   callback_data="copy_ref_link",
                                  icon_custom_emoji_id=EMOJI_REF_LINK),
             InlineKeyboardButton(" Главное меню", callback_data="back_to_menu",
-                                 icon_custom_emoji_id=EMOJI_HOME),
+                                 icon_custom_emoji_id=EMOJI_DET_BACK),
         )
     else:
         kb.add(
             InlineKeyboardButton(" Пригласить ещё", callback_data="referral",
                                  icon_custom_emoji_id=EMOJI_INVITE),
             InlineKeyboardButton(" Главное меню",   callback_data="back_to_menu",
-                                 icon_custom_emoji_id=EMOJI_HOME),
+                                 icon_custom_emoji_id=EMOJI_DET_BACK),
         )
     return kb
 
