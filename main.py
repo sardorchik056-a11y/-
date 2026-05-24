@@ -462,9 +462,9 @@ def payment_watcher():
                         to_remove.append(invoice_id)
                         continue
 
-                    text = (f'<tg-emoji emoji-id="5260399854500191689">🎟</tg-emoji> Оплата подтверждена!\n\n'
-                            f'<tg-emoji emoji-id="5258204546391351475">🎟</tg-emoji> Пополнено: {amount}$\n'
-                            f'<tg-emoji emoji-id="5258204546391351475">🎟</tg-emoji> Текущий баланс: {get_user_balance(uid)}$')
+                    text = (f'<tg-emoji emoji-id="5467839602301623490">🎟</tg-emoji> Оплата подтверждена!\n\n'
+                            f'<tg-emoji emoji-id="5199527184229751349">🎟</tg-emoji> Пополнено: {amount}$\n'
+                            f'<tg-emoji emoji-id="5454060067315801997">🎟</tg-emoji> Текущий баланс: {get_user_balance(uid)}$')
                     try:
                         bot.edit_message_caption(
                             caption=text, chat_id=chat_id, message_id=msg_id,
@@ -2405,10 +2405,10 @@ def process_payment(chat_id: int, user_id: int, amount: float, edit_msg_id=None)
         bot.send_message(user_id, "❌ Ошибка создания платежа. Попробуйте позже.")
         return
 
-    text = (f'<tg-emoji emoji-id="5258108352008823107">🎟</tg-emoji> Пополнение баланса\n\n'
-            f'<tg-emoji emoji-id="5904462880941545555">🎟</tg-emoji>Сумма: {amount}$\n<tg-emoji emoji-id="5258185631355378853">🎟</tg-emoji>Валюта: USDT\n\n'
+    text = (f'<b><tg-emoji emoji-id="5879814368572478751">🎟</tg-emoji> Пополнение.\n\n'
+            f'<tg-emoji emoji-id="5199527184229751349">🎟</tg-emoji>Сумма: {amount}$\n<tg-emoji emoji-id="5454060067315801997">🎟</tg-emoji>Валюта: USDT\n\n'
             f"Нажмите «Оплатить» и завершите оплату в CryptoBot.\n"
-            f"Баланс пополнится автоматически в течение нескольких секунд.")
+            f"Баланс пополнится автоматически в течение нескольких секунд.</b>")
     kb = payment_keyboard(invoice_url)
 
     if edit_msg_id:
