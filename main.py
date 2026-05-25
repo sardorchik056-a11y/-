@@ -169,7 +169,7 @@ def register_user(user_id: int, username: str = None):
     db_exec(
         """INSERT OR IGNORE INTO users
            (user_id, username, balance, total_bought, referral_earnings, is_banned, is_approved, registered_at)
-           VALUES (?, ?, 0.0, 0, 0.0, 0, 0, ?)""",
+           VALUES (?, ?, 0.0, 0, 0.0, 0, 1, ?)""",
         (user_id, username, str(datetime.now()))
     )
 
@@ -210,10 +210,7 @@ def set_approved(user_id: int, approved: bool):
     db_exec("UPDATE users SET is_approved=? WHERE user_id=?", (1 if approved else 0, user_id))
 
 def is_approved(user_id: int) -> bool:
-    if user_id in ADMIN_IDS:
-        return True
-    row = db_exec("SELECT is_approved FROM users WHERE user_id=?", (user_id,), fetchone=True)
-    return bool(row["is_approved"]) if row else False
+    return True
 
 def is_udv_mode_enabled(user_id: int) -> bool:
     """Проверяет включен ли режим UDV для пользователя"""
@@ -502,17 +499,6 @@ def payment_watcher():
         for inv_id in to_remove:
             active_invoices.pop(inv_id, None)
 
-def apply_keyboard():
-    """Клавиатура для неодобренного пользователя."""
-    kb = InlineKeyboardMarkup()
-    kb.add(InlineKeyboardButton("📋 Подать заявку", callback_data="send_application"))
-    return kb
-
-def oferta_keyboard():
-    """Клавиатура после отправки заявки — кнопка ознакомления с офертой."""
-    kb = InlineKeyboardMarkup()
-    kb.add(InlineKeyboardButton("✅ Ознакомился", callback_data="oferta_acknowledged"))
-    return kb
 
 # Айди кастомных эмодзи для кнопок главного меню
 EMOJI_BTN_SHOP      = "5257965810634202885"   # Шоп
@@ -624,7 +610,6 @@ def admin_keyboard():
         InlineKeyboardButton("📢 Рассылка",          callback_data="admin_mailing"),
         InlineKeyboardButton("📊 Статистика",        callback_data="admin_stats"),
         InlineKeyboardButton("⚠️ Бан пользователя", callback_data="admin_ban"),
-        InlineKeyboardButton("📋 Заявки",            callback_data="admin_applications"),
         InlineKeyboardButton("🔙 Выход",             callback_data="back_to_menu"),
     )
     return kb
@@ -845,14 +830,6 @@ def back_to_admin_users_keyboard():
     kb.add(InlineKeyboardButton("◀️Назад", callback_data="admin_users"))
     return kb
 
-def application_admin_keyboard(app_user_id: int):
-    """Кнопки Принять/Отклонить для конкретной заявки."""
-    kb = InlineKeyboardMarkup(row_width=2)
-    kb.add(
-        InlineKeyboardButton("✅ Принять",   callback_data=f"app_approve_{app_user_id}"),
-        InlineKeyboardButton("❌ Отклонить", callback_data=f"app_reject_{app_user_id}"),
-    )
-    return kb
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
@@ -874,16 +851,6 @@ def edit_message(chat_id, message_id, text, keyboard=None):
     except:
         pass
 
-def notify_admins_about_application(user_id: int, username: str = None):
-    text = (f"📋 НОВАЯ ЗАЯВКА\n\n"
-            f"👤 ID: {user_id}\n"
-            f"Username: @{username or 'нет'}")
-    kb = application_admin_keyboard(user_id)
-    for admin_id in ADMIN_IDS:
-        try:
-            bot.send_message(admin_id, text, reply_markup=kb, parse_mode="HTML")
-        except:
-            pass
 
 def product_info_text(product_key: str, product: dict) -> str:
     stats = get_items_stats(product_key)
@@ -961,8 +928,7 @@ def admin_command(message):
     text = ("👑 АДМИН ПАНЕЛЬ | MAX\n\n━━━━━━━━━━━━━━━\n\n"
             "1 — 📦 Товары\n2 — 👥 Пользователи\n"
             "3 — 💰 Пополнения\n4 — 📢 Рассылка\n"
-            "5 — 📊 Статистика\n6 — ⚠️ Бан\n"
-            "7 — 📋 Заявки\n\n━━━━━━━━━━━━━━━")
+            "5 — 📊 Статистика\n6 — ⚠️ Бан\n\n━━━━━━━━━━━━━━━")
     bot.send_message(user_id, text, reply_markup=admin_keyboard(), parse_mode="HTML")
 
 @bot.message_handler(commands=["addfileid"])
@@ -987,56 +953,6 @@ def handle_photo(message):
             f"✅ Фото сохранено! Теперь главное меню будет отправляться с этим изображением.\n\nfile_id: <code>{file_id}</code>",
             parse_mode="HTML")
 
-@bot.message_handler(commands=["tall"])
-def tall_command(message):
-    """Принять все ожидающие заявки."""
-    user_id = message.from_user.id
-    if not is_admin(user_id):
-        bot.send_message(user_id, "⛔ Нет доступа!")
-        return
-    apps = get_pending_applications()
-    if not apps:
-        bot.send_message(user_id, "📋 Нет ожидающих заявок.")
-        return
-    count = 0
-    for app in apps:
-        uid = app["user_id"]
-        set_application_status(uid, "approved")
-        set_approved(uid, True)
-        count += 1
-        try:
-            bot.send_message(uid,
-                "✅ Ваша заявка одобрена!\n\n"
-                "Добро пожаловать! Теперь у вас есть полный доступ к боту.",
-                parse_mode="HTML")
-        except:
-            pass
-    bot.send_message(user_id, f"✅ Принято заявок: {count}")
-
-@bot.message_handler(commands=["call"])
-def call_command(message):
-    """Отклонить все ожидающие заявки."""
-    user_id = message.from_user.id
-    if not is_admin(user_id):
-        bot.send_message(user_id, "⛔ Нет доступа!")
-        return
-    apps = get_pending_applications()
-    if not apps:
-        bot.send_message(user_id, "📋 Нет ожидающих заявок.")
-        return
-    count = 0
-    for app in apps:
-        uid = app["user_id"]
-        set_application_status(uid, "rejected")
-        count += 1
-        try:
-            bot.send_message(uid,
-                "❌ Ваша заявка отклонена.\n\n"
-                "Обратитесь в поддержку для уточнения причины.",
-                parse_mode="HTML")
-        except:
-            pass
-    bot.send_message(user_id, f"❌ Отклонено заявок: {count}")
 
 @bot.message_handler(commands=["showb"])
 def showb_command(message):
@@ -1095,98 +1011,6 @@ def callback_handler(call):
         bot.answer_callback_query(call.id)
         return
 
-    if data == "send_application":
-        if is_approved(user_id):
-            bot.answer_callback_query(call.id, "✅ У вас уже есть доступ!", show_alert=True)
-            return
-        created = create_application(user_id, username)
-        if created:
-            try:
-                bot.edit_message_text(
-                    "✅ Ваша заявка отправлена на проверку администрации.\n\n"
-                    "📄 Изучите оферту: https://graph.org/PRAVILA-05-12-296",
-                    chat_id=chat_id, message_id=message_id,
-                    reply_markup=oferta_keyboard()
-                )
-            except:
-                bot.send_message(user_id,
-                    "✅ Ваша заявка отправлена на проверку администрации.\n\n"
-                    "📄 Изучите оферту: https://graph.org/PRAVILA-05-12-296",
-                    reply_markup=oferta_keyboard())
-            notify_admins_about_application(user_id, username)
-        else:
-            bot.answer_callback_query(call.id,
-                "⏳ Ваша заявка уже отправлена, ожидайте ответа.", show_alert=True)
-        bot.answer_callback_query(call.id)
-        return
-
-    if data == "oferta_acknowledged":
-        try:
-            bot.edit_message_text(
-                "⏳ Ожидайте — мы уведомим вас о решении.",
-                chat_id=chat_id, message_id=message_id, reply_markup=None
-            )
-        except:
-            bot.send_message(user_id, "⏳ Ожидайте — мы уведомим вас о решении.")
-        bot.answer_callback_query(call.id)
-        return
-
-    if data.startswith("app_approve_"):
-        if not is_admin(user_id):
-            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
-            return
-        target_id = int(data[len("app_approve_"):])
-        set_application_status(target_id, "approved")
-        set_approved(target_id, True)
-        target = get_user(target_id)
-        uname = f"@{target['username']}" if target and target["username"] else f"ID{target_id}"
-        try:
-            bot.edit_message_reply_markup(chat_id=chat_id, message_id=message_id, reply_markup=None)
-            bot.edit_message_text(
-                f"✅ Заявка от {uname} — ПРИНЯТА",
-                chat_id=chat_id, message_id=message_id
-            )
-        except:
-            bot.send_message(chat_id, f"✅ Заявка от {uname} принята.")
-        try:
-            bot.send_message(target_id,
-                "✅ Ваша заявка одобрена!\n\n"
-                "Добро пожаловать! Теперь у вас есть полный доступ к боту.",
-                parse_mode="HTML")
-        except:
-            pass
-        bot.answer_callback_query(call.id, "✅ Принято!")
-        return
-
-    if data.startswith("app_reject_"):
-        if not is_admin(user_id):
-            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
-            return
-        target_id = int(data[len("app_reject_"):])
-        set_application_status(target_id, "rejected")
-        target = get_user(target_id)
-        uname = f"@{target['username']}" if target and target["username"] else f"ID{target_id}"
-        try:
-            bot.edit_message_text(
-                f"❌ Заявка от {uname} — ОТКЛОНЕНА",
-                chat_id=chat_id, message_id=message_id, reply_markup=None
-            )
-        except:
-            bot.send_message(chat_id, f"❌ Заявка от {uname} отклонена.")
-        try:
-            bot.send_message(target_id,
-                "❌ Ваша заявка отклонена.\n\n"
-                "Обратитесь в поддержку для уточнения причины.",
-                parse_mode="HTML")
-        except:
-            pass
-        bot.answer_callback_query(call.id, "❌ Отклонено!")
-        return
-
-    if not is_approved(user_id):
-        bot.answer_callback_query(call.id,
-            "⛔ У вас нет доступа. Подайте заявку.", show_alert=True)
-        return
 
     if data == "back_to_menu":
         user_states.pop(user_id, None)
@@ -1461,7 +1285,7 @@ Web Token и JSON замене не подлежат если были рабо�
         text += f"│\n"
         text += f"├{line}┤\n"
         text += f'│ <tg-emoji emoji-id="5190810548102516273">🎟</tg-emoji> Введите количество:\n'
-        text += f'│ <tg-emoji emoji-id="5226513232549664618">🎟</tg-emoji> Минимум: 15 шт</b>\n'
+        text += f'│ <tg-emoji emoji-id="5226513232549664618">🎟</tg-emoji> Минимум: 5 шт</b>\n'
         text += f"╰{line}╯"
         edit_message(chat_id, message_id, text, buy_product_keyboard())
         bot.answer_callback_query(call.id)
@@ -1741,18 +1565,6 @@ Web Token и JSON замене не подлежат если были рабо�
         text += "\n━━━━━━━━━━━━━━━\nВыберите действие:"
         edit_message(chat_id, message_id, text, admin_products_keyboard())
 
-    elif data == "admin_applications":
-        if not is_admin(user_id): return
-        apps = get_pending_applications()
-        if not apps:
-            text = "📋 ЗАЯВКИ\n\nНет ожидающих заявок."
-        else:
-            text = f"📋 ЗАЯВКИ\n\nОжидающих: {len(apps)}\n\n"
-            for app in apps:
-                uname = f"@{app['username']}" if app["username"] else f"ID{app['user_id']}"
-                text += f"• {uname} — {app['applied_at'][:16]}\n"
-        edit_message(chat_id, message_id, text, back_to_admin_keyboard())
-        bot.answer_callback_query(call.id)
 
     elif data == "admin_panel":
         if not is_admin(user_id):
@@ -1761,8 +1573,7 @@ Web Token и JSON замене не подлежат если были рабо�
         text = ("👑 АДМИН ПАНЕЛЬ | MAX\n\n━━━━━━━━━━━━━━━\n\n"
                 "1 — 📦 Товары\n2 — 👥 Пользователи\n"
                 "3 — 💰 Пополнения\n4 — 📢 Рассылка\n"
-                "5 — 📊 Статистика\n6 — ⚠️ Бан\n"
-                "7 — 📋 Заявки\n\n━━━━━━━━━━━━━━━")
+                "5 — 📊 Статистика\n6 — ⚠️ Бан\n\n━━━━━━━━━━━━━━━")
         edit_message(chat_id, message_id, text, admin_keyboard())
         bot.answer_callback_query(call.id)
 
@@ -1982,11 +1793,9 @@ Web Token и JSON замене не подлежат если были рабо�
         users     = get_all_users()
         purchases = get_all_purchases()
         products  = get_all_products()
-        apps      = get_pending_applications()
         text = (f"📊 СТАТИСТИКА\n\n━━━━━━━━━━━━━━━\n"
                 f"👥 Пользователей: {len(users)}\n"
                 f"✅ Одобрено: {sum(1 for u in users if u['is_approved'])}\n"
-                f"⏳ Заявок на рассмотрении: {len(apps)}\n"
                 f"🚫 Заблокировано: {sum(1 for u in users if u['is_banned'])}\n"
                 f"📦 Покупок: {len(purchases)}\n"
                 f"💰 Доход: {round(sum(p['amount'] for p in purchases), 2)}$\n"
@@ -2038,8 +1847,8 @@ def handle_message(message):
         quantity = int(text)
         product  = get_product(product_key)
 
-        if quantity < 15:
-            bot.send_message(user_id, "❌ Минимальное количество для покупки: 15 шт!")
+        if quantity < 5:
+            bot.send_message(user_id, "❌ Минимальное количество для покупки: 5 шт!")
             return
 
         if not product or quantity > product["stock"]:
