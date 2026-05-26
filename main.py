@@ -6,6 +6,7 @@ import time
 import requests
 import threading
 from datetime import datetime
+from flask import Flask, request, abort
 
 BOT_TOKEN = "8920094371:AAGWzL47y5ZYD91zjVOdiKPIFp_RrvYO98I"
 CRYPTOBOT_TOKEN = "562214:AABJIaVpSkcIR7FvY7B8Oh3TszuqCUgi0Tk"
@@ -13,12 +14,7 @@ ADMIN_IDS = [8118184388, 8276697984, 8115654734]
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-try:
-    bot.remove_webhook()
-    print("✅ Вебхук удалён")
-except:
-    pass
-time.sleep(1)
+# Вебхук устанавливается при запуске
 
 DB_FILE = "bot.db"
 
@@ -2294,6 +2290,28 @@ def process_payment(chat_id: int, user_id: int, amount: float, edit_msg_id=None)
             "message_id": msg_id
         }
 
+
+# ─── Flask webhook server ────────────────────────────────────────────────────
+app = Flask(__name__)
+
+WEBHOOK_HOST = os.environ.get("WEBHOOK_URL", "").rstrip("/")
+WEBHOOK_PATH = f"/webhook/{BOT_TOKEN}"
+WEBHOOK_URL  = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
+PORT         = int(os.environ.get("PORT", 10000))
+
+@app.route("/")
+def health():
+    return "OK", 200
+
+@app.route(WEBHOOK_PATH, methods=["POST"])
+def webhook():
+    if request.headers.get("content-type") == "application/json":
+        json_string = request.get_data().decode("utf-8")
+        update = telebot.types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+        return "", 200
+    abort(403)
+
 if __name__ == "__main__":
     _open_connection()
     init_db()
@@ -2301,21 +2319,20 @@ if __name__ == "__main__":
     watcher = threading.Thread(target=payment_watcher, daemon=True)
     watcher.start()
 
-    print("=" * 50)
-    print(f"🤖 БОТ ЗАПУЩЕН  |  БД: {DB_FILE}")
-    print("=" * 50)
-    print(f"✅ Токен: {BOT_TOKEN[:10]}...")
-    print(f"👑 Админы: {ADMIN_IDS}")
-    print(f"🔄 Авто-проверка оплаты: каждые 3 сек")
-    print("=" * 50)
-
-    while True:
-        try:
-            bot.polling(none_stop=True, interval=1, timeout=60)
-        except KeyboardInterrupt:
-            print("\n🔴 Бот остановлен")
-            _conn.close()
-            break
-        except Exception as e:
-            print(f"❌ Ошибка polling: {e}")
-            time.sleep(5)
+    # Устанавливаем вебхук
+    bot.remove_webhook()
+    time.sleep(0.5)
+    if WEBHOOK_HOST:
+        bot.set_webhook(url=WEBHOOK_URL)
+        print("=" * 50)
+        print(f"BOT STARTED (WEBHOOK MODE) | DB: {DB_FILE}")
+        print("=" * 50)
+        print(f"Token: {BOT_TOKEN[:10]}...")
+        print(f"Admins: {ADMIN_IDS}")
+        print(f"Webhook: {WEBHOOK_URL}")
+        print(f"Port: {PORT}")
+        print("=" * 50)
+        app.run(host="0.0.0.0", port=PORT)
+    else:
+        print("WEBHOOK_URL not set! Set it in Render environment variables.")
+        raise SystemExit(1)
