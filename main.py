@@ -1,2338 +1,1415 @@
-import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-import sqlite3
-import os
-import time
-import requests
-import threading
-from datetime import datetime
-from flask import Flask, request, abort
+# -*- coding: utf-8 -*-
+"""
+XYLT exchange — Telegram-бот для обмена USDT/GRAM -> RUB
+aiogram 3.x + SQLite (aiosqlite)
 
-BOT_TOKEN = "8920094371:AAGWzL47y5ZYD91zjVOdiKPIFp_RrvYO98I"
-CRYPTOBOT_TOKEN = "562214:AABJIaVpSkcIR7FvY7B8Oh3TszuqCUgi0Tk"
-ADMIN_IDS = [8118184388, 8276697984, 8115654734]
+Установка зависимостей:
+    pip install aiogram aiosqlite aiohttp
 
-bot = telebot.TeleBot(BOT_TOKEN)
+Запуск:
+    python main.py
 
-# Вебхук устанавливается при запуске
+Перед запуском заполните константы в блоке CONFIG ниже
+(токен бота, id админов, при необходимости токен CryptoBot Pay API).
+"""
 
-DB_FILE = "bot.db"
+import asyncio
+import logging
+import re
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 
-user_states = {}
-active_invoices = {}
-user_stock_cap = {}
+import aiosqlite
+from aiogram import Bot, Dispatcher, Router, F
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
+from aiogram.filters import CommandStart, Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import (
+    Message,
+    CallbackQuery,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardRemove,
+)
+from aiogram.exceptions import TelegramBadRequest
 
-EMOJI_CATALOG   = "6030776052345737530"
-EMOJI_REFERRAL  = "5258513401784573443"
-EMOJI_SUPPORT   = "5357069174512303778"
-SUPPORT_USERNAME = "Wulmis"           # Юзернейм поддержки (без @)
-EMOJI_SUPPORT_CONTACT = "6039451237743595514"  # Кнопка Связаться с админом
-EMOJI_SUPPORT_BACK    = "6039539366177541657"  # Кнопка Назад в support
-EMOJI_TERMS     = "5258501105293205250"
-EMOJI_BALANCE   = "5258204546391351475"
-EMOJI_BACK      = "6039539366177541657"
-EMOJI_PAY       = "6030776052345737530"
-EMOJI_CANCEL    = "6039539366177541657"
-EMOJI_REF_LINK  = "5260730055880876557"
-EMOJI_REF_STATS = "5258330865674494479"
-EMOJI_HOME      = "5260399854500191689"
-EMOJI_INVITE    = "5258513401784573443"
+# ============================== CONFIG =====================================
 
-# Айди эмодзи для кнопок рефералки (замени на свои)
-EMOJI_REF_COPY  = "5463216615468324631"   # Кнопка скопировать ссылку
-EMOJI_REF_BACK  = "6039539366177541657"   # Кнопка назад
-EMOJI_BUY       = "5258185631355378853"
-EMOJI_DEPOSIT   = "6039496266180726678"
-EMOJI_CUSTOM    = "6039496266180726678"
-EMOJI_AGREE     = "6041720006973067267"
-EMOJI_CUSTOMM = "5258215846450305872"
+BOT_TOKEN = "8651956926:AAG3ML1uGBPQOgrM5WAMl3kXaRLvVxTHCsw"
 
-# Айди эмодзи для кнопок пополнения (замени на свои)
-EMOJI_DEP_5    = "5454060067315801997"
-EMOJI_DEP_10   = "5454060067315801997"
-EMOJI_DEP_25   = "5454060067315801997"
-EMOJI_DEP_50   = "5454060067315801997"
-EMOJI_DEP_100  = "5454060067315801997"
-EMOJI_DEP_250  = "5454060067315801997"
-EMOJI_DEP_CUSTOM = "5197434882321567830"  # Своя сумма
-EMOJI_DEP_BACK   = "6039539366177541657"  # Назад
-_db_lock = threading.Lock()
-_conn: sqlite3.Connection = None
+# Telegram user_id админов, у которых есть доступ к /admin
+ADMIN_IDS: set[int] = {8118184388}
 
-def _open_connection():
-    global _conn
-    _conn = sqlite3.connect(DB_FILE, check_same_thread=False, timeout=15)
-    _conn.row_factory = sqlite3.Row
-    _conn.execute("PRAGMA journal_mode=WAL")
-    _conn.execute("PRAGMA synchronous=NORMAL")
-    _conn.execute("PRAGMA foreign_keys=ON")
-    _conn.execute("PRAGMA cache_size=-8000")
-    _conn.commit()
+# username саппорта, куда ведёт кнопка "Поддержка" (без @)
+SUPPORT_USERNAME = "xylt_admin"
 
-def db_exec(query: str, params=(), fetchone=False, fetchall=False):
-    with _db_lock:
-        cur = _conn.execute(query, params)
-        _conn.commit()
-        if fetchone:
-            return cur.fetchone()
-        if fetchall:
-            return cur.fetchall()
-        return cur
+DB_PATH = "xylt.db"
 
-def init_db():
-    with _db_lock:
-        _conn.executescript("""
-            CREATE TABLE IF NOT EXISTS users (
-                user_id           INTEGER PRIMARY KEY,
-                username          TEXT,
-                balance           REAL    NOT NULL DEFAULT 0.0,
-                total_bought      INTEGER NOT NULL DEFAULT 0,
-                referrer_id       INTEGER,
-                referral_earnings REAL    NOT NULL DEFAULT 0.0,
-                is_banned         INTEGER NOT NULL DEFAULT 0,
-                is_approved       INTEGER NOT NULL DEFAULT 0,
-                registered_at     TEXT
-            );
+MSK = timezone(timedelta(hours=3))
 
-            CREATE TABLE IF NOT EXISTS referrals (
-                referrer_id INTEGER NOT NULL,
-                referral_id INTEGER NOT NULL,
-                PRIMARY KEY (referrer_id, referral_id)
-            );
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
+log = logging.getLogger("xylt")
 
-            CREATE TABLE IF NOT EXISTS applications (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id      INTEGER NOT NULL,
-                username     TEXT,
-                status       TEXT NOT NULL DEFAULT 'pending',
-                applied_at   TEXT
-            );
+# ============================== DATABASE ===================================
 
-            CREATE TABLE IF NOT EXISTS products (
-                product_key TEXT PRIMARY KEY,
-                name        TEXT NOT NULL,
-                emoji       TEXT NOT NULL DEFAULT '📦',
-                price       REAL NOT NULL,
-                stock       INTEGER NOT NULL DEFAULT 0,
-                description TEXT NOT NULL DEFAULT ''
-            );
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS users (
+    user_id INTEGER PRIMARY KEY,
+    username TEXT,
+    phone TEXT,
+    fio TEXT,
+    bank TEXT,
+    joined_at TEXT NOT NULL,
+    turnover REAL NOT NULL DEFAULT 0,
+    total_rub REAL NOT NULL DEFAULT 0,
+    is_blocked INTEGER NOT NULL DEFAULT 0
+);
 
-            CREATE TABLE IF NOT EXISTS product_items (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                product_key  TEXT NOT NULL,
-                content      TEXT NOT NULL,
-                is_used      INTEGER NOT NULL DEFAULT 0,
-                added_at     TEXT
-            );
+CREATE TABLE IF NOT EXISTS requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    currency TEXT NOT NULL,
+    amount REAL,
+    rate REAL,
+    rub_amount REAL,
+    bank TEXT,
+    fio TEXT,
+    phone TEXT,
+    status TEXT NOT NULL DEFAULT 'awaiting_receipt',
+    operator_id INTEGER,
+    operator_username TEXT,
+    created_at TEXT NOT NULL,
+    completed_at TEXT,
+    rating INTEGER
+);
 
-            CREATE TABLE IF NOT EXISTS purchases (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id      INTEGER NOT NULL,
-                product_key  TEXT    NOT NULL,
-                quantity     INTEGER NOT NULL,
-                amount       REAL    NOT NULL,
-                purchased_at TEXT
-            );
+CREATE TABLE IF NOT EXISTS rates (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    usdt_tier1 REAL NOT NULL DEFAULT 89.20,
+    usdt_tier2 REAL NOT NULL DEFAULT 89.65,
+    usdt_tier3 REAL NOT NULL DEFAULT 90.09,
+    gram_rate REAL NOT NULL DEFAULT 133.87,
+    min_usdt REAL NOT NULL DEFAULT 11.66,
+    min_gram REAL NOT NULL DEFAULT 7.77
+);
 
-            CREATE TABLE IF NOT EXISTS udv_mode (
-                user_id INTEGER PRIMARY KEY,
-                enabled INTEGER NOT NULL DEFAULT 0
-            );
+CREATE TABLE IF NOT EXISTS settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    night_boost_enabled INTEGER NOT NULL DEFAULT 1,
+    night_boost_start TEXT NOT NULL DEFAULT '01:00',
+    night_boost_end TEXT NOT NULL DEFAULT '09:00',
+    night_boost_bonus REAL NOT NULL DEFAULT 0.75
+);
 
-            CREATE TABLE IF NOT EXISTS settings (
-                key   TEXT PRIMARY KEY,
-                value TEXT
-            );
-        """)
-        _conn.commit()
+CREATE TABLE IF NOT EXISTS support_tickets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    message TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    answered INTEGER NOT NULL DEFAULT 0
+);
 
-        count = _conn.execute("SELECT COUNT(*) FROM products").fetchone()[0]
-        if count == 0:
-            _conn.executemany(
-                "INSERT INTO products(product_key,name,emoji,price,stock,description) VALUES(?,?,?,?,?,?)",
-                [
-                    ('web_token', 'Web Token', '<tg-emoji emoji-id="5258503720928288433">🎟</tg-emoji>', 2.50, 0,
-                     "Токен доступа, готов к использованию"),
-                    ('json',      'JSON',       '<tg-emoji emoji-id="5258477770735885832">🎟</tg-emoji>', 3.00, 0,
-                     "Полные данные в JSON формате"),
-                    ('autoreg',   'Авторег',    '<tg-emoji emoji-id="6030400221232501136">🎟</tg-emoji>', 1.80, 0,
-                     "Аккаунт зарегистрированный на SIM"),
-                ]
-            )
-            _conn.commit()
+CREATE TABLE IF NOT EXISTS broadcasts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    text TEXT NOT NULL,
+    sent_at TEXT NOT NULL,
+    sent_count INTEGER NOT NULL DEFAULT 0
+);
+"""
 
-def register_user(user_id: int, username: str = None):
-    db_exec(
-        """INSERT OR IGNORE INTO users
-           (user_id, username, balance, total_bought, referral_earnings, is_banned, is_approved, registered_at)
-           VALUES (?, ?, 0.0, 0, 0.0, 0, 1, ?)""",
-        (user_id, username, str(datetime.now()))
-    )
 
-def get_user(user_id: int):
-    return db_exec("SELECT * FROM users WHERE user_id=?", (user_id,), fetchone=True)
+class DB:
+    """Тонкая обёртка над aiosqlite для всего бота."""
 
-def get_all_users():
-    return db_exec("SELECT * FROM users", fetchall=True)
+    def __init__(self, path: str):
+        self.path = path
+        self._conn: aiosqlite.Connection | None = None
+        self._lock = asyncio.Lock()
 
-def get_user_balance(user_id: int) -> float:
-    row = db_exec("SELECT balance FROM users WHERE user_id=?", (user_id,), fetchone=True)
-    return round(row["balance"], 2) if row else 0.0
-
-def add_balance(user_id: int, amount: float):
-    db_exec(
-        "UPDATE users SET balance=ROUND(balance+?,2) WHERE user_id=?",
-        (amount, user_id)
-    )
-
-def deduct_balance(user_id: int, amount: float) -> bool:
-    with _db_lock:
-        row = _conn.execute(
-            "SELECT balance FROM users WHERE user_id=?", (user_id,)
-        ).fetchone()
-        if row and row["balance"] >= amount:
-            _conn.execute(
-                "UPDATE users SET balance=ROUND(balance-?,2) WHERE user_id=?",
-                (amount, user_id)
-            )
-            _conn.commit()
-            return True
-    return False
-
-def set_banned(user_id: int, banned: bool):
-    db_exec("UPDATE users SET is_banned=? WHERE user_id=?", (1 if banned else 0, user_id))
-
-def set_approved(user_id: int, approved: bool):
-    db_exec("UPDATE users SET is_approved=? WHERE user_id=?", (1 if approved else 0, user_id))
-
-def is_approved(user_id: int) -> bool:
-    return True
-
-def is_udv_mode_enabled(user_id: int) -> bool:
-    """Проверяет включен ли режим UDV для пользователя"""
-    row = db_exec("SELECT enabled FROM udv_mode WHERE user_id=?", (user_id,), fetchone=True)
-    return bool(row["enabled"]) if row else False
-
-def set_udv_mode(user_id: int, enabled: bool):
-    """Включает/выключает режим UDV"""
-    db_exec(
-        "INSERT OR REPLACE INTO udv_mode (user_id, enabled) VALUES (?, ?)",
-        (user_id, 1 if enabled else 0)
-    )
-
-def get_setting(key: str) -> str | None:
-    row = db_exec("SELECT value FROM settings WHERE key=?", (key,), fetchone=True)
-    return row["value"] if row else None
-
-def set_setting(key: str, value: str):
-    db_exec(
-        "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
-        (key, value)
-    )
-
-def create_application(user_id: int, username: str = None):
-    """Создаёт заявку, если ещё нет активной/принятой."""
-    existing = db_exec(
-        "SELECT * FROM applications WHERE user_id=? AND status IN ('pending','approved')",
-        (user_id,), fetchone=True
-    )
-    if existing:
-        return False
-    db_exec(
-        "INSERT INTO applications(user_id,username,status,applied_at) VALUES(?,?,?,?)",
-        (user_id, username, "pending", str(datetime.now()))
-    )
-    return True
-
-def get_pending_applications():
-    return db_exec(
-        "SELECT * FROM applications WHERE status='pending'", fetchall=True
-    )
-
-def set_application_status(user_id: int, status: str):
-    db_exec(
-        "UPDATE applications SET status=? WHERE user_id=? AND status='pending'",
-        (status, user_id)
-    )
-
-def add_referral(referrer_id: int, referral_id: int):
-    db_exec(
-        "INSERT OR IGNORE INTO referrals(referrer_id,referral_id) VALUES(?,?)",
-        (referrer_id, referral_id)
-    )
-    db_exec(
-        "UPDATE users SET referrer_id=? WHERE user_id=? AND referrer_id IS NULL",
-        (referrer_id, referral_id)
-    )
-
-def get_referrals(referrer_id: int):
-    return db_exec(
-        "SELECT referral_id FROM referrals WHERE referrer_id=?",
-        (referrer_id,), fetchall=True
-    )
-
-def add_referral_earning(referrer_id: int, amount: float):
-    db_exec(
-        """UPDATE users
-           SET balance=ROUND(balance+?,2),
-               referral_earnings=ROUND(referral_earnings+?,2)
-           WHERE user_id=?""",
-        (amount, amount, referrer_id)
-    )
-
-def get_all_products() -> dict:
-    rows = db_exec("SELECT * FROM products", fetchall=True)
-    return {r["product_key"]: dict(r) for r in rows}
-
-def get_product(product_key: str):
-    row = db_exec(
-        "SELECT * FROM products WHERE product_key=?", (product_key,), fetchone=True
-    )
-    return dict(row) if row else None
-
-def upsert_product(product_key, name, emoji, price, stock, description):
-    db_exec(
-        """INSERT INTO products(product_key,name,emoji,price,stock,description)
-           VALUES(?,?,?,?,?,?)
-           ON CONFLICT(product_key) DO UPDATE SET
-             name=excluded.name, emoji=excluded.emoji,
-             price=excluded.price, stock=excluded.stock,
-             description=excluded.description""",
-        (product_key, name, emoji, price, stock, description)
-    )
-
-def update_product_field(product_key: str, field: str, value):
-    allowed = {"name", "emoji", "price", "stock", "description"}
-    if field not in allowed:
-        return
-    db_exec(f"UPDATE products SET {field}=? WHERE product_key=?", (value, product_key))
-
-def add_stock(product_key: str, amount: int):
-    db_exec(
-        "UPDATE products SET stock=stock+? WHERE product_key=?",
-        (amount, product_key)
-    )
-
-def delete_product(product_key: str):
-    db_exec("DELETE FROM products WHERE product_key=?", (product_key,))
-    db_exec("DELETE FROM product_items WHERE product_key=?", (product_key,))
-
-def set_product_items(product_key: str, items: list):
-    """Заменяет весь набор текстов товара (фиксированный контент для выдачи всем)."""
-    with _db_lock:
-        _conn.execute("DELETE FROM product_items WHERE product_key=?", (product_key,))
-        _conn.executemany(
-            "INSERT INTO product_items(product_key,content,is_used,added_at) VALUES(?,?,0,?)",
-            [(product_key, item, str(datetime.now())) for item in items]
+    async def connect(self):
+        self._conn = await aiosqlite.connect(self.path)
+        self._conn.row_factory = aiosqlite.Row
+        await self._conn.executescript(SCHEMA)
+        await self._conn.execute(
+            "INSERT OR IGNORE INTO rates (id) VALUES (1)"
         )
-        _conn.commit()
-
-def add_product_items(product_key: str, items: list):
-    """Добавляет тексты к существующему набору товара."""
-    with _db_lock:
-        _conn.executemany(
-            "INSERT INTO product_items(product_key,content,is_used,added_at) VALUES(?,?,0,?)",
-            [(product_key, item, str(datetime.now())) for item in items]
+        await self._conn.execute(
+            "INSERT OR IGNORE INTO settings (id) VALUES (1)"
         )
-        _conn.commit()
+        await self._conn.commit()
+        log.info("DB подключена: %s", self.path)
 
-def get_all_items(product_key: str) -> list:
-    """Возвращает весь фиксированный набор текстов товара (не расходуются)."""
-    rows = db_exec(
-        "SELECT content FROM product_items WHERE product_key=? ORDER BY id",
-        (product_key,), fetchall=True
-    )
-    return [r["content"] for r in rows]
+    async def close(self):
+        if self._conn:
+            await self._conn.close()
 
-def get_items_stats(product_key: str) -> dict:
-    total = db_exec(
-        "SELECT COUNT(*) as cnt FROM product_items WHERE product_key=?",
-        (product_key,), fetchone=True
-    )
-    free = db_exec(
-        "SELECT COUNT(*) as cnt FROM product_items WHERE product_key=? AND is_used=0",
-        (product_key,), fetchone=True
-    )
-    used = db_exec(
-        "SELECT COUNT(*) as cnt FROM product_items WHERE product_key=? AND is_used=1",
-        (product_key,), fetchone=True
-    )
-    return {
-        "total": total["cnt"] if total else 0,
-        "free":  free["cnt"]  if free  else 0,
-        "used":  used["cnt"]  if used  else 0,
-    }
+    # ---- users ----
 
-def delete_product_items(product_key: str):
-    """Удаляет весь контент товара."""
-    db_exec("DELETE FROM product_items WHERE product_key=?", (product_key,))
+    async def get_user(self, user_id: int) -> aiosqlite.Row | None:
+        async with self._lock:
+            cur = await self._conn.execute(
+                "SELECT * FROM users WHERE user_id = ?", (user_id,)
+            )
+            return await cur.fetchone()
 
-def add_purchase(user_id: int, product_key: str, quantity: int, amount: float):
-    db_exec(
-        """INSERT INTO purchases(user_id,product_key,quantity,amount,purchased_at)
-           VALUES(?,?,?,?,?)""",
-        (user_id, product_key, quantity, amount, str(datetime.now()))
-    )
-    db_exec(
-        "UPDATE users SET total_bought=total_bought+? WHERE user_id=?",
-        (quantity, user_id)
-    )
-
-def get_user_purchases(user_id: int):
-    return db_exec(
-        "SELECT * FROM purchases WHERE user_id=?", (user_id,), fetchall=True
-    )
-
-def get_all_purchases():
-    return db_exec("SELECT * FROM purchases", fetchall=True)
-
-def create_invoice(amount: float, user_id: int):
-    url = "https://pay.crypt.bot/api/createInvoice"
-    headers = {
-        "Crypto-Pay-API-Token": CRYPTOBOT_TOKEN,
-        "Content-Type": "application/json"
-    }
-    data = {
-        "asset": "USDT",
-        "amount": str(amount),
-        "description": f"Пополнение баланса. User ID: {user_id}",
-        "expires_in": 3600
-    }
-    try:
-        r = requests.post(url, headers=headers, json=data, timeout=10)
-        result = r.json()
-        if result.get("ok"):
-            inv = result["result"]
-            return inv["invoice_id"], inv["bot_invoice_url"]
-    except Exception as e:
-        print(f"Ошибка создания инвойса: {e}")
-    return None, None
-
-def check_invoice_status(invoice_id):
-    url = "https://pay.crypt.bot/api/getInvoices"
-    headers = {"Crypto-Pay-API-Token": CRYPTOBOT_TOKEN}
-    try:
-        r = requests.get(url, headers=headers,
-                         params={"invoice_ids": str(invoice_id)}, timeout=10)
-        result = r.json()
-        if result.get("ok"):
-            items = result["result"].get("items", [])
-            if items:
-                return items[0].get("status")
-    except Exception as e:
-        print(f"Ошибка проверки инвойса: {e}")
-    return None
-
-def payment_watcher():
-    while True:
-        time.sleep(3)
-        if not active_invoices:
-            continue
-        to_remove = []
-        for invoice_id, info in list(active_invoices.items()):
-            try:
-                status = check_invoice_status(invoice_id)
-                if status == "paid":
-                    uid      = info["user_id"]
-                    amount   = info["amount"]
-                    chat_id  = info["chat_id"]
-                    msg_id   = info["message_id"]
-
-                    add_balance(uid, amount)
-                    user_stock_cap[uid] = True
-
-                    user = get_user(uid)
-                    referrer_id = user["referrer_id"] if user else None
-                    if referrer_id:
-                        bonus = round(amount * 0.1, 2)
-                        add_referral_earning(referrer_id, bonus)
-                        try:
-                            bot.send_message(int(referrer_id),
-                                f"🎁 Ваш реферал пополнил баланс на {amount}$!\n"
-                                f"💰 Вам начислено: +{bonus}$",
-                                parse_mode="HTML")
-                        except:
-                            pass
-
-                    # Не показываем уведомление если включен режим UDV
-                    if is_udv_mode_enabled(uid):
-                        to_remove.append(invoice_id)
-                        continue
-
-                    text = (f'<tg-emoji emoji-id="5467839602301623490">🎟</tg-emoji> Оплата подтверждена!\n\n'
-                            f'<tg-emoji emoji-id="5199527184229751349">🎟</tg-emoji> Пополнено: {amount}$\n'
-                            f'<tg-emoji emoji-id="5454060067315801997">🎟</tg-emoji> Текущий баланс: {get_user_balance(uid)}$')
-                    try:
-                        bot.edit_message_caption(
-                            caption=text, chat_id=chat_id, message_id=msg_id,
-                            reply_markup=None, parse_mode="HTML")
-                    except:
-                        try:
-                            bot.edit_message_text(text, chat_id=chat_id,
-                                                  message_id=msg_id, reply_markup=None,
-                                                  parse_mode="HTML")
-                        except:
-                            pass
-                    to_remove.append(invoice_id)
-
-                elif status == "expired":
-                    try:
-                        try:
-                            bot.edit_message_caption(
-                                caption="⏰ Счёт истёк. Создайте новый.",
-                                chat_id=info["chat_id"], message_id=info["message_id"],
-                                reply_markup=None, parse_mode="HTML")
-                        except:
-                            bot.edit_message_text(
-                                "⏰ Счёт истёк. Создайте новый.",
-                                chat_id=info["chat_id"], message_id=info["message_id"],
-                                reply_markup=None, parse_mode="HTML")
-                    except:
-                        pass
-                    to_remove.append(invoice_id)
-            except Exception as e:
-                print(f"Ошибка watcher: {e}")
-        for inv_id in to_remove:
-            active_invoices.pop(inv_id, None)
-
-
-# Айди кастомных эмодзи для кнопок главного меню
-EMOJI_BTN_SHOP      = "5257965810634202885"   # Шоп
-EMOJI_BTN_PURCHASES = "5258134813302332906"   # Мои покупки
-EMOJI_BTN_DEPOSIT   = "5879814368572478751"   # Пополнить
-EMOJI_BTN_REF       = "5258513401784573443"   # Рефералка
-EMOJI_BTN_HELP      = "6035191085452497972"   # Help
-
-# Айди кастомных эмодзи для кнопок каталога (замени на свои)
-EMOJI_CAT_HEADER  = "5188212140133080599"   # Иконка заголовка ВИТРИНА
-EMOJI_CAT_ITEM_1  = "5258503720928288433"   # Иконка 1-го товара в кнопке
-EMOJI_CAT_ITEM_2  = "5258477770735885832"   # Иконка 2-го товара в кнопке
-EMOJI_CAT_ITEM_3  = "6030400221232501136"   # Иконка 3-го товара в кнопке
-EMOJI_CAT_DEPOSIT = "5879814368572478751"   # Иконка кнопки Пополнить
-EMOJI_CAT_BACK    = "6039539366177541657"   # Иконка кнопки Назад
-# Если товаров больше 3 — добавь EMOJI_CAT_ITEM_4 и т.д.
-CATALOG_ITEM_EMOJIS = [EMOJI_CAT_ITEM_1, EMOJI_CAT_ITEM_2, EMOJI_CAT_ITEM_3]
-
-# Айди кастомных эмодзи для раздела "Мои покупки" (замени на свои)
-EMOJI_PUR_HEADER  = "5258477770735885832"   # Иконка заголовка МОИ ПОКУПКИ
-EMOJI_PUR_ITEM    = "5258503720928288433"   # Иконка каждой покупки в кнопке
-EMOJI_PUR_SHOP    = "5258477770735885832"   # Иконка кнопки В ШОП
-EMOJI_PUR_BACK    = "6039539366177541657"   # Иконка кнопки Назад
-
-# Айди кастомных эмодзи для детальной страницы покупки (замени на свои)
-EMOJI_DET_HEADER  = "5258503720928288433"   # Иконка заголовка с названием товара
-EMOJI_DET_PRICE   = "5199527184229751349"   # Иконка цены
-EMOJI_DET_DATE    = "5258105663359294787"   # Иконка даты
-EMOJI_DET_WAYS    = "5778299625370817409"   # Иконка "СПОСОБЫ ПОЛУЧЕНИЯ"
-EMOJI_DET_QR      = "5461009719537720232"   # Иконка кнопки QR
-EMOJI_DET_KOD     = "5226513232549664618"   # Иконка кнопки KOD
-EMOJI_DET_TOKEN   = "5190810548102516273"   # Иконка кнопки TOKEN
-EMOJI_DET_BACK    = "6039539366177541657"   # Иконка кнопки Назад к покупкам
-
-def main_menu_keyboard(user_id=None):
-    kb = InlineKeyboardMarkup(row_width=2)
-    kb.row(
-        InlineKeyboardButton(" Шоп",        callback_data="catalog",
-                             icon_custom_emoji_id=EMOJI_BTN_SHOP),
-        InlineKeyboardButton(" Мои покупки", callback_data="my_purchases",
-                             icon_custom_emoji_id=EMOJI_BTN_PURCHASES),
-    )
-    kb.row(
-        InlineKeyboardButton(" Пополнить",  callback_data="balance",
-                             icon_custom_emoji_id=EMOJI_BTN_DEPOSIT),
-        InlineKeyboardButton(" Рефералка",  callback_data="referral",
-                             icon_custom_emoji_id=EMOJI_BTN_REF),
-    )
-    kb.row(
-        InlineKeyboardButton(" Help",       callback_data="support",
-                             icon_custom_emoji_id=EMOJI_BTN_HELP),
-    )
-    return kb
-
-def send_main_menu(message):
-    user_id    = message.from_user.id
-    username   = message.from_user.username
-    first_name = message.from_user.first_name
-    text       = get_profile_text(user_id, username, first_name)
-    kb         = main_menu_keyboard(user_id)
-
-    # Пробуем получить фото профиля пользователя
-    profile_photo_id = None
-    try:
-        photos = bot.get_user_profile_photos(user_id, limit=1)
-        if photos and photos.total_count > 0:
-            profile_photo_id = photos.photos[0][-1].file_id
-    except:
-        pass
-
-    if profile_photo_id:
-        bot.send_photo(user_id, profile_photo_id, caption=text,
-                       reply_markup=kb, parse_mode="HTML")
-    else:
-        # Фото нет — используем сохранённое фото меню (если есть)
-        photo_id = get_setting("menu_photo_file_id")
-        if photo_id:
-            bot.send_photo(user_id, photo_id, caption=text,
-                           reply_markup=kb, parse_mode="HTML")
+    async def ensure_user(self, user_id: int, username: str | None):
+        user = await self.get_user(user_id)
+        if user is None:
+            async with self._lock:
+                await self._conn.execute(
+                    "INSERT INTO users (user_id, username, joined_at) VALUES (?, ?, ?)",
+                    (user_id, username, datetime.now(MSK).strftime("%d.%m.%Y")),
+                )
+                await self._conn.commit()
         else:
-            bot.send_message(user_id, text, reply_markup=kb, parse_mode="HTML")
+            async with self._lock:
+                await self._conn.execute(
+                    "UPDATE users SET username = ? WHERE user_id = ?",
+                    (username, user_id),
+                )
+                await self._conn.commit()
 
-def catalog_keyboard():
-    kb = InlineKeyboardMarkup(row_width=1)
-    products = list(get_all_products().items())
-    for i, (key, p) in enumerate(products):
-        emoji_id = CATALOG_ITEM_EMOJIS[i] if i < len(CATALOG_ITEM_EMOJIS) else EMOJI_CAT_ITEM_1
-        kb.row(InlineKeyboardButton(
-            f" {p['name']} | {p['price']}$",
-            callback_data=f"buy_{key}",
-            icon_custom_emoji_id=emoji_id
-        ))
-    kb.row(InlineKeyboardButton(
-        " Пополнить", callback_data="balance",
-        icon_custom_emoji_id=EMOJI_CAT_DEPOSIT
-    ))
-    kb.row(InlineKeyboardButton(
-        " Назад", callback_data="back_to_menu",
-        icon_custom_emoji_id=EMOJI_CAT_BACK
-    ))
-    return kb
+    async def update_user_field(self, user_id: int, field: str, value):
+        assert field in ("phone", "fio", "bank", "is_blocked")
+        async with self._lock:
+            await self._conn.execute(
+                f"UPDATE users SET {field} = ? WHERE user_id = ?", (value, user_id)
+            )
+            await self._conn.commit()
 
-def admin_keyboard():
-    kb = InlineKeyboardMarkup(row_width=2)
-    kb.add(
-        InlineKeyboardButton("📦 Товары",            callback_data="admin_products"),
-        InlineKeyboardButton("👥 Пользователи",      callback_data="admin_users"),
-        InlineKeyboardButton("💰 Пополнения",        callback_data="admin_deposits"),
-        InlineKeyboardButton("📢 Рассылка",          callback_data="admin_mailing"),
-        InlineKeyboardButton("📊 Статистика",        callback_data="admin_stats"),
-        InlineKeyboardButton("⚠️ Бан пользователя", callback_data="admin_ban"),
-        InlineKeyboardButton("🔙 Выход",             callback_data="back_to_menu"),
-    )
-    return kb
+    async def add_turnover(self, user_id: int, amount: float, rub: float):
+        async with self._lock:
+            await self._conn.execute(
+                "UPDATE users SET turnover = turnover + ?, total_rub = total_rub + ? "
+                "WHERE user_id = ?",
+                (amount, rub, user_id),
+            )
+            await self._conn.commit()
 
-def admin_products_keyboard():
-    kb = InlineKeyboardMarkup(row_width=1)
-    kb.add(
-        InlineKeyboardButton("➕ Добавить товар",        callback_data="add_product"),
-        InlineKeyboardButton("✏️ Управление товаром",    callback_data="manage_product_list"),
-        InlineKeyboardButton("📦 Добавить контент",      callback_data="add_items_select"),
-        InlineKeyboardButton("📊 Статистика контента",   callback_data="items_stats_select"),
-        InlineKeyboardButton("🗑 Очистить контент",      callback_data="clear_items_select"),
-        InlineKeyboardButton("❌ Удалить товар",         callback_data="delete_product"),
-        InlineKeyboardButton("◀️ Назад",                 callback_data="admin_panel"),
-    )
-    return kb
+    async def all_user_ids(self) -> list[int]:
+        async with self._lock:
+            cur = await self._conn.execute("SELECT user_id FROM users")
+            rows = await cur.fetchall()
+            return [r["user_id"] for r in rows]
 
-def manage_product_list_keyboard(action_prefix: str):
-    kb = InlineKeyboardMarkup(row_width=1)
-    for key, p in get_all_products().items():
-        stats = get_items_stats(key)
-        kb.add(InlineKeyboardButton(
-            f"{p['emoji']} {p['name']} | {p['price']}$ | 📦{stats['free']} свободно",
-            callback_data=f"{action_prefix}{key}"
-        ))
-    kb.add(InlineKeyboardButton("◀️ Назад", callback_data="admin_products"))
-    return kb
+    async def stats(self) -> dict:
+        async with self._lock:
+            cur = await self._conn.execute("SELECT COUNT(*) c FROM users")
+            users_count = (await cur.fetchone())["c"]
+            cur = await self._conn.execute(
+                "SELECT COUNT(*) c FROM requests WHERE status = 'completed'"
+            )
+            completed = (await cur.fetchone())["c"]
+            cur = await self._conn.execute(
+                "SELECT COALESCE(SUM(amount),0) s FROM requests WHERE status='completed'"
+            )
+            total_amount = (await cur.fetchone())["s"]
+            cur = await self._conn.execute(
+                "SELECT COALESCE(SUM(rub_amount),0) s FROM requests WHERE status='completed'"
+            )
+            total_rub = (await cur.fetchone())["s"]
+            cur = await self._conn.execute(
+                "SELECT COUNT(*) c FROM requests WHERE status IN "
+                "('awaiting_receipt','pending_review','searching','in_progress')"
+            )
+            pending = (await cur.fetchone())["c"]
+            return {
+                "users": users_count,
+                "completed": completed,
+                "total_amount": total_amount,
+                "total_rub": total_rub,
+                "pending": pending,
+            }
 
-def product_manage_keyboard(product_key: str):
-    kb = InlineKeyboardMarkup(row_width=2)
-    kb.add(
-        InlineKeyboardButton("📦 Добавить контент",     callback_data=f"items_add_{product_key}"),
-        InlineKeyboardButton("📊 Контент статистика",   callback_data=f"items_stat_{product_key}"),
-        InlineKeyboardButton("💰 Изменить цену",        callback_data=f"prod_setprice_{product_key}"),
-        InlineKeyboardButton("✏️ Изменить название",    callback_data=f"prod_setname_{product_key}"),
-        InlineKeyboardButton("📝 Изменить описание",    callback_data=f"prod_setdesc_{product_key}"),
-        InlineKeyboardButton("🎭 Изменить эмодзи",     callback_data=f"prod_setemoji_{product_key}"),
-        InlineKeyboardButton("🔢 Изменить остаток",     callback_data=f"prod_setstock_{product_key}"),
-        InlineKeyboardButton("📋 Полное редактирование", callback_data=f"prod_full_{product_key}"),
-        InlineKeyboardButton("◀️ Назад",                callback_data="manage_product_list"),
-    )
-    return kb
+    # ---- rates / settings ----
 
-def admin_users_keyboard():
-    kb = InlineKeyboardMarkup(row_width=1)
-    kb.add(
-        InlineKeyboardButton("📋 Список пользователей", callback_data="admin_user_list"),
-        InlineKeyboardButton("🔍 Найти пользователя",   callback_data="admin_find_user"),
-        InlineKeyboardButton("◀️ Назад",                callback_data="admin_panel"),
-    )
-    return kb
+    async def get_rates(self) -> aiosqlite.Row:
+        async with self._lock:
+            cur = await self._conn.execute("SELECT * FROM rates WHERE id = 1")
+            return await cur.fetchone()
 
-def admin_deposits_keyboard():
-    kb = InlineKeyboardMarkup(row_width=1)
-    kb.add(
-        InlineKeyboardButton("💰 Ручное зачисление", callback_data="admin_manual_deposit"),
-        InlineKeyboardButton("◀️ Назад",             callback_data="admin_panel"),
-    )
-    return kb
+    async def set_rate_field(self, field: str, value: float):
+        assert field in ("usdt_tier1", "usdt_tier2", "usdt_tier3", "gram_rate",
+                          "min_usdt", "min_gram")
+        async with self._lock:
+            await self._conn.execute(
+                f"UPDATE rates SET {field} = ? WHERE id = 1", (value,)
+            )
+            await self._conn.commit()
 
-def referral_keyboard():
-    kb = InlineKeyboardMarkup(row_width=1)
-    kb.row(InlineKeyboardButton(
-        " Нажми чтобы скопировать", callback_data="copy_ref_link",
-        icon_custom_emoji_id=EMOJI_REF_COPY
-    ))
-    kb.row(InlineKeyboardButton(
-        " Назад", callback_data="back_to_menu",
-        icon_custom_emoji_id=EMOJI_REF_BACK
-    ))
-    return kb
+    async def get_settings(self) -> aiosqlite.Row:
+        async with self._lock:
+            cur = await self._conn.execute("SELECT * FROM settings WHERE id = 1")
+            return await cur.fetchone()
 
-def my_referrals_keyboard(has_referrals=False):
-    kb = InlineKeyboardMarkup(row_width=2)
-    if not has_referrals:
-        kb.add(
-            InlineKeyboardButton(" Моя ссылка",   callback_data="copy_ref_link",
-                                 icon_custom_emoji_id=EMOJI_REF_LINK),
-            InlineKeyboardButton(" Назад", callback_data="back_to_menu",
-                                 icon_custom_emoji_id=EMOJI_BACK),
-        )
-    else:
-        kb.add(
-            InlineKeyboardButton(" Пригласить ещё", callback_data="referral",
-                                 icon_custom_emoji_id=EMOJI_INVITE),
-            InlineKeyboardButton(" Назад",          callback_data="back_to_menu",
-                                 icon_custom_emoji_id=EMOJI_BACK),
-        )
-    return kb
+    async def set_setting_field(self, field: str, value):
+        assert field in ("night_boost_enabled", "night_boost_start",
+                          "night_boost_end", "night_boost_bonus")
+        async with self._lock:
+            await self._conn.execute(
+                f"UPDATE settings SET {field} = ? WHERE id = 1", (value,)
+            )
+            await self._conn.commit()
 
-def support_keyboard():
-    kb = InlineKeyboardMarkup(row_width=1)
-    kb.row(InlineKeyboardButton(
-        " Связаться с админом",
-        url=f"https://t.me/{SUPPORT_USERNAME}",
-        icon_custom_emoji_id=EMOJI_SUPPORT_CONTACT
-    ))
-    kb.row(InlineKeyboardButton(
-        " Назад", callback_data="back_to_menu",
-        icon_custom_emoji_id=EMOJI_SUPPORT_BACK
-    ))
-    return kb
+    # ---- requests ----
 
-def terms_keyboard():
-    kb = InlineKeyboardMarkup(row_width=2)
-    kb.add(
-        InlineKeyboardButton(" Согласен", callback_data="back_to_menu",
-                             icon_custom_emoji_id=EMOJI_AGREE),
-        InlineKeyboardButton(" Назад",    callback_data="back_to_menu",
-                             icon_custom_emoji_id=EMOJI_BACK),
-    )
-    return kb
+    async def create_request(self, user_id: int, currency: str, fio: str,
+                              phone: str, bank: str) -> int:
+        async with self._lock:
+            cur = await self._conn.execute(
+                "INSERT INTO requests (user_id, currency, fio, phone, bank, "
+                "status, created_at) VALUES (?, ?, ?, ?, ?, 'awaiting_receipt', ?)",
+                (user_id, currency, fio, phone, bank, datetime.now(MSK).isoformat()),
+            )
+            await self._conn.commit()
+            return cur.lastrowid
 
-def balance_info_keyboard():
-    kb = InlineKeyboardMarkup(row_width=2)
-    kb.row(
-        InlineKeyboardButton("Пополнить", callback_data="deposit_menu"),
-        InlineKeyboardButton(" Назад", callback_data="back_to_menu",
-                             icon_custom_emoji_id=EMOJI_BACK),
-    )
-    return kb
+    async def get_request(self, req_id: int) -> aiosqlite.Row | None:
+        async with self._lock:
+            cur = await self._conn.execute(
+                "SELECT * FROM requests WHERE id = ?", (req_id,)
+            )
+            return await cur.fetchone()
 
-def balance_keyboard():
-    kb = InlineKeyboardMarkup(row_width=3)
-    kb.row(
-        InlineKeyboardButton(" 5$",   callback_data="deposit_5",
-                             icon_custom_emoji_id=EMOJI_DEP_5),
-        InlineKeyboardButton(" 10$",  callback_data="deposit_10",
-                             icon_custom_emoji_id=EMOJI_DEP_10),
-        InlineKeyboardButton(" 25$",  callback_data="deposit_25",
-                             icon_custom_emoji_id=EMOJI_DEP_25),
-    )
-    kb.row(
-        InlineKeyboardButton(" 50$",  callback_data="deposit_50",
-                             icon_custom_emoji_id=EMOJI_DEP_50),
-        InlineKeyboardButton(" 100$", callback_data="deposit_100",
-                             icon_custom_emoji_id=EMOJI_DEP_100),
-        InlineKeyboardButton(" 250$", callback_data="deposit_250",
-                             icon_custom_emoji_id=EMOJI_DEP_250),
-    )
-    kb.row(InlineKeyboardButton(" Своя сумма", callback_data="deposit_custom",
-                                icon_custom_emoji_id=EMOJI_DEP_CUSTOM))
-    kb.row(InlineKeyboardButton(" Назад", callback_data="back_to_menu",
-                                icon_custom_emoji_id=EMOJI_DEP_BACK))
-    return kb
+    async def set_request_amount_rate(self, req_id: int, amount: float,
+                                       rate: float, rub_amount: float):
+        async with self._lock:
+            await self._conn.execute(
+                "UPDATE requests SET amount = ?, rate = ?, rub_amount = ?, "
+                "status = 'pending_review' WHERE id = ?",
+                (amount, rate, rub_amount, req_id),
+            )
+            await self._conn.commit()
 
-def payment_keyboard(invoice_url: str):
-    kb = InlineKeyboardMarkup(row_width=2)
-    kb.add(
-        InlineKeyboardButton(" Оплатить", url=invoice_url,
-                             icon_custom_emoji_id=EMOJI_PAY),
-        InlineKeyboardButton(" Отмена",   callback_data="cancel_payment",
-                             icon_custom_emoji_id=EMOJI_CANCEL),
-    )
-    return kb
+    async def set_request_status(self, req_id: int, status: str):
+        async with self._lock:
+            await self._conn.execute(
+                "UPDATE requests SET status = ? WHERE id = ?", (status, req_id)
+            )
+            await self._conn.commit()
 
-def buy_product_keyboard():
-    kb = InlineKeyboardMarkup()
-    kb.add(InlineKeyboardButton(" В каталог", callback_data="catalog",
-                                icon_custom_emoji_id=EMOJI_BACK))
-    return kb
+    async def assign_operator(self, req_id: int, operator_id: int, username: str | None):
+        async with self._lock:
+            await self._conn.execute(
+                "UPDATE requests SET status = 'in_progress', operator_id = ?, "
+                "operator_username = ? WHERE id = ?",
+                (operator_id, username, req_id),
+            )
+            await self._conn.commit()
 
-def confirm_buy_keyboard(product_key: str, quantity: int, insufficient=False):
-    kb = InlineKeyboardMarkup(row_width=2)
-    if insufficient:
-        kb.add(
-            InlineKeyboardButton(" Пополнить баланс", callback_data="balance",
-                                 icon_custom_emoji_id=EMOJI_BALANCE),
-            InlineKeyboardButton(" Каталог",          callback_data="catalog",
-                                 icon_custom_emoji_id=EMOJI_BACK),
-        )
-    else:
-        kb.add(
-            InlineKeyboardButton(" Купить", callback_data=f"confirm_buy_{product_key}_{quantity}",
-                                 icon_custom_emoji_id=EMOJI_BUY),
-            InlineKeyboardButton(" Отмена", callback_data="cancel_buy",
-                                 icon_custom_emoji_id=EMOJI_CANCEL),
-        )
-    return kb
+    async def complete_request(self, req_id: int):
+        async with self._lock:
+            await self._conn.execute(
+                "UPDATE requests SET status = 'completed', completed_at = ? "
+                "WHERE id = ?",
+                (datetime.now(MSK).isoformat(), req_id),
+            )
+            await self._conn.commit()
 
-def after_buy_keyboard():
-    kb = InlineKeyboardMarkup(row_width=2)
-    kb.add(
-        InlineKeyboardButton(" Поддержка",    callback_data="support",
-                             icon_custom_emoji_id=EMOJI_SUPPORT),
-        InlineKeyboardButton(" Назад", callback_data="back_to_menu",
-                             icon_custom_emoji_id=EMOJI_BACK),
-    )
-    return kb
+    async def set_rating(self, req_id: int, rating: int):
+        async with self._lock:
+            await self._conn.execute(
+                "UPDATE requests SET rating = ? WHERE id = ?", (rating, req_id)
+            )
+            await self._conn.commit()
 
-def cancel_buy_keyboard():
-    kb = InlineKeyboardMarkup(row_width=2)
-    kb.add(
-        InlineKeyboardButton(" Каталог",      callback_data="catalog",
-                             icon_custom_emoji_id=EMOJI_CATALOG),
-        InlineKeyboardButton(" Назад", callback_data="back_to_menu",
-                             icon_custom_emoji_id=EMOJI_BACK),
-    )
-    return kb
+    async def pending_requests(self) -> list[aiosqlite.Row]:
+        async with self._lock:
+            cur = await self._conn.execute(
+                "SELECT * FROM requests WHERE status IN "
+                "('pending_review','searching','in_progress') ORDER BY id DESC"
+            )
+            return await cur.fetchall()
 
-def cancel_payment_keyboard():
-    kb = InlineKeyboardMarkup(row_width=2)
-    kb.add(
-        InlineKeyboardButton(" Баланс",       callback_data="balance",
-                             icon_custom_emoji_id=EMOJI_BALANCE),
-        InlineKeyboardButton(" Назад", callback_data="back_to_menu",
-                             icon_custom_emoji_id=EMOJI_BACK),
-    )
-    return kb
+    # ---- support ----
 
-def back_to_admin_keyboard():
-    kb = InlineKeyboardMarkup()
-    kb.add(InlineKeyboardButton("◀️Назад", callback_data="admin_panel"))
-    return kb
+    async def add_ticket(self, user_id: int, text: str) -> int:
+        async with self._lock:
+            cur = await self._conn.execute(
+                "INSERT INTO support_tickets (user_id, message, created_at) "
+                "VALUES (?, ?, ?)",
+                (user_id, text, datetime.now(MSK).isoformat()),
+            )
+            await self._conn.commit()
+            return cur.lastrowid
 
-def back_to_admin_users_keyboard():
-    kb = InlineKeyboardMarkup()
-    kb.add(InlineKeyboardButton("◀️Назад", callback_data="admin_users"))
-    return kb
+    async def open_tickets(self) -> list[aiosqlite.Row]:
+        async with self._lock:
+            cur = await self._conn.execute(
+                "SELECT * FROM support_tickets WHERE answered = 0 ORDER BY id DESC"
+            )
+            return await cur.fetchall()
+
+    async def mark_ticket_answered(self, ticket_id: int):
+        async with self._lock:
+            await self._conn.execute(
+                "UPDATE support_tickets SET answered = 1 WHERE id = ?", (ticket_id,)
+            )
+            await self._conn.commit()
+
+
+db = DB(DB_PATH)
+
+# ============================== FSM STATES =================================
+
+
+class ProfileForm(StatesGroup):
+    phone = State()
+    fio = State()
+    bank = State()
+
+
+class ExchangeFlow(StatesGroup):
+    choosing_currency = State()
+    filling_form = State()
+    waiting_phone = State()
+    waiting_fio = State()
+    waiting_bank = State()
+    waiting_receipt = State()
+
+
+class SupportForm(StatesGroup):
+    waiting_message = State()
+
+
+class AdminRates(StatesGroup):
+    waiting_value = State()
+
+
+class AdminBoost(StatesGroup):
+    waiting_time = State()
+    waiting_bonus = State()
+
+
+class AdminUsers(StatesGroup):
+    waiting_id = State()
+    waiting_block_id = State()
+    waiting_unblock_id = State()
+
+
+class AdminReview(StatesGroup):
+    waiting_amount = State()
+
+
+class AdminBroadcastForm(StatesGroup):
+    waiting_text = State()
+
+
+class AdminSettings(StatesGroup):
+    waiting_min_usdt = State()
+    waiting_min_gram = State()
+
+# ============================== HELPERS =====================================
+
+BANKS = ["Сбер", "Тинькофф", "ВТБ", "Альфа", "Райффайзен", "Другой"]
+
+PHONE_RE = re.compile(r"^\+?\d[\d\s\-()]{9,17}\d$")
 
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
-def edit_message(chat_id, message_id, text, keyboard=None):
-    """Умное редактирование: caption для фото-сообщений, text для обычных."""
-    # Сначала пробуем edit_message_caption (работает если сообщение с фото)
+
+def now_msk_time() -> datetime:
+    return datetime.now(MSK)
+
+
+async def is_night_boost_active() -> tuple[bool, float]:
+    settings = await db.get_settings()
+    if not settings["night_boost_enabled"]:
+        return False, 0.0
     try:
-        bot.edit_message_caption(
-            caption=text, chat_id=chat_id, message_id=message_id,
-            reply_markup=keyboard, parse_mode="HTML")
-        return
-    except Exception as e:
-        if "there is no caption" not in str(e).lower() and "message is not modified" not in str(e).lower():
-            pass  # сообщение не является фото — пробуем edit_message_text
-    try:
-        bot.edit_message_text(text, chat_id=chat_id, message_id=message_id,
-                              reply_markup=keyboard, parse_mode="HTML")
-    except:
-        pass
+        start_h, start_m = map(int, settings["night_boost_start"].split(":"))
+        end_h, end_m = map(int, settings["night_boost_end"].split(":"))
+    except Exception:
+        return False, 0.0
+    now = now_msk_time()
+    start = now.replace(hour=start_h, minute=start_m, second=0, microsecond=0)
+    end = now.replace(hour=end_h, minute=end_m, second=0, microsecond=0)
+    if start <= end:
+        active = start <= now <= end
+    else:
+        # окно переходит через полночь
+        active = now >= start or now <= end
+    return active, float(settings["night_boost_bonus"])
 
 
-def product_info_text(product_key: str, product: dict) -> str:
-    stats = get_items_stats(product_key)
-    text  = f"📦 ТОВАР: {product['emoji']} {product['name']}\n\n"
-    text += f"🔑 Ключ: {product_key}\n"
-    text += f"💰 Цена: {product['price']}$\n"
-    text += f"📊 Остаток: {stats['free']} шт (всего: {stats['total']}, выдано: {stats['used']})\n"
-    text += f"📝 Описание: {product['description']}\n"
-    return text
-
-def get_display_stock(user_id: int, real_stock: int) -> int:
-    if user_stock_cap.get(user_id, False):
-        return min(real_stock, 24)
-    return real_stock
-
-def get_profile_text(user_id: int, username: str = None, first_name: str = None) -> str:
-    user = get_user(user_id)
-    balance      = round(user["balance"], 2) if user else 0.0
-    total_bought = user["total_bought"]      if user else 0
-    try:
-        reg_date = datetime.strptime(user["registered_at"][:19], "%Y-%m-%d %H:%M:%S") if user and user["registered_at"] else datetime.now()
-        days_in_bot = (datetime.now() - reg_date).days
-    except:
-        days_in_bot = 0
-    name = first_name or username or "Пользователь"
-
-    # Рейтинг: 12 блоков (10 заполненных, 2 пустых — по умолчанию)
-    filled = min(10, total_bought)
-    rating_bar = "█" * filled + "□" * (12 - filled)
-
-    line = "──────────────────"
-    text  = f'╭{line}╮\n'
-    text += f'│ <b><tg-emoji emoji-id="5454158795729029479">🎟</tg-emoji> HER|SHOP  │  LVL 1  │  ТОРГОВЕЦ\n'
-    text += f'├{line}┤\n'
-    text += f'│\n'
-    text += f'│ <tg-emoji emoji-id="5454130320095862431">🎟</tg-emoji> {name}\n'
-    text += f'│ <tg-emoji emoji-id="5456125594397856810">🎟</tg-emoji> {user_id}\n'
-    text += f'│ <tg-emoji emoji-id="5463216615468324631">🎟</tg-emoji> @{username or "none"}\n'
-    text += f'│\n'
-    text += f'│ <tg-emoji emoji-id="5199527184229751349">🎟</tg-emoji> {balance:.2f} <tg-emoji emoji-id="5406841020769936275">🎟</tg-emoji>\n'
-    text += f'│ <tg-emoji emoji-id="5467839602301623490">🎟</tg-emoji> {total_bought} акков куплено\n'
-    text += f'│ <tg-emoji emoji-id="5472213472441817609">🎟</tg-emoji> {days_in_bot} days в системе\n'
-    text += f'│\n'
-    text += f'│ <tg-emoji emoji-id="5460914671911460239">🎟</tg-emoji> Рейтинг: {rating_bar}\n'
-    text += f'│ <tg-emoji emoji-id="5416081784641168838">🎟</tg-emoji> Статус: Active</b>\n'
-    text += f'╰{line}╯\n'
-    return text
-
-@bot.message_handler(commands=["start"])
-def start_command(message):
-    user_id  = message.from_user.id
-    username = message.from_user.username
-    register_user(user_id, username)
-
-    user = get_user(user_id)
-    if user and user["is_banned"]:
-        return
-
-    args = message.text.split()
-    if len(args) > 1 and args[1].isdigit():
-        referrer_id = int(args[1])
-        if (referrer_id != user_id
-                and get_user(referrer_id) is not None
-                and user and user["referrer_id"] is None):
-            add_referral(referrer_id, user_id)
-
-    send_main_menu(message)
-
-@bot.message_handler(commands=["admin"])
-def admin_command(message):
-    user_id = message.from_user.id
-    if not is_admin(user_id):
-        bot.send_message(user_id, "⛔ Нет доступа!")
-        return
-    text = ("👑 АДМИН ПАНЕЛЬ | MAX\n\n━━━━━━━━━━━━━━━\n\n"
-            "1 — 📦 Товары\n2 — 👥 Пользователи\n"
-            "3 — 💰 Пополнения\n4 — 📢 Рассылка\n"
-            "5 — 📊 Статистика\n6 — ⚠️ Бан\n\n━━━━━━━━━━━━━━━")
-    bot.send_message(user_id, text, reply_markup=admin_keyboard(), parse_mode="HTML")
-
-@bot.message_handler(commands=["addfileid"])
-def addfileid_command(message):
-    user_id = message.from_user.id
-    if not is_admin(user_id):
-        bot.send_message(user_id, "⛔ Нет доступа!")
-        return
-    user_states[user_id] = {"awaiting_menu_photo": True}
-    bot.send_message(user_id, "📸 Отправьте фото, которое будет показываться в главном меню.")
-
-@bot.message_handler(content_types=["photo"])
-def handle_photo(message):
-    user_id = message.from_user.id
-    state = user_states.get(user_id, {})
-    if state.get("awaiting_menu_photo"):
-        file_id = message.photo[-1].file_id
-        set_setting("menu_photo_file_id", file_id)
-        del user_states[user_id]
-        bot.send_message(
-            user_id,
-            f"✅ Фото сохранено! Теперь главное меню будет отправляться с этим изображением.\n\nfile_id: <code>{file_id}</code>",
-            parse_mode="HTML")
+async def compute_rate(currency: str, amount: float) -> float:
+    """Возвращает курс ₽/$ (или ₽/GRAM) с учётом суммы и ночного буста."""
+    rates = await db.get_rates()
+    if currency == "GRAM":
+        base = rates["gram_rate"]
+    else:
+        if amount < 150:
+            base = rates["usdt_tier1"]
+        elif amount < 300:
+            base = rates["usdt_tier2"]
+        else:
+            base = rates["usdt_tier3"]
+    boosted, bonus = await is_night_boost_active()
+    if boosted:
+        base += bonus
+    return round(base, 2)
 
 
-@bot.message_handler(commands=["showb"])
-def showb_command(message):
-    user_id = message.from_user.id
-    if not is_admin(user_id):
-        bot.send_message(user_id, "⛔ Нет доступа!")
-        return
+def fmt(n: float) -> str:
+    return f"{n:,.2f}".replace(",", " ")
 
-    users     = get_all_users()
-    purchases = get_all_purchases()
 
-    total_balance = round(sum(u["balance"] for u in users), 2)
-    total_purchases_amount = round(sum(p["amount"] for p in purchases), 2)
-
-    deposit_stats = {}
-    for p in purchases:
-        uid = p["user_id"]
-        deposit_stats[uid] = deposit_stats.get(uid, 0) + p["amount"]
-
-    top_depositors = sorted(deposit_stats.items(), key=lambda x: x[1], reverse=True)[:5]
-    users_with_balance = sum(1 for u in users if u["balance"] > 0)
-
-    text = (
-        "💰 ОБЩИЙ БАЛАНС И СТАТИСТИКА ПОПОЛНЕНИЙ\n\n"
-        "━━━━━━━━━━━━━━━\n\n"
-        f"👥 Всего пользователей: {len(users)}\n"
-        f"💵 Пользователей с балансом: {users_with_balance}\n"
-        f"💰 Суммарный баланс всех юзеров: {total_balance}$\n"
-        f"📦 Всего покупок: {len(purchases)}\n"
-        f"📈 Общий оборот (покупки): {total_purchases_amount}$\n\n"
-        "━━━━━━━━━━━━━━━\n\n"
-        "🏆 ТОП-5 ПОКУПАТЕЛЕЙ:\n"
+def main_menu_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="💱 Обменять"), KeyboardButton(text="📊 Курсы")],
+            [KeyboardButton(text="✍️ Мои профиль"), KeyboardButton(text="💭 Поддержка")],
+        ],
+        resize_keyboard=True,
     )
 
-    for i, (uid, amount) in enumerate(top_depositors, 1):
-        u = get_user(uid)
-        uname = f"@{u['username']}" if u and u["username"] else f"ID{uid}"
-        text += f"{i}. {uname} — {round(amount, 2)}$\n"
 
-    if not top_depositors:
-        text += "Пока нет данных\n"
-
-    text += "\n━━━━━━━━━━━━━━━"
-    bot.send_message(user_id, text, parse_mode="HTML")
-
-@bot.callback_query_handler(func=lambda call: True)
-def callback_handler(call):
-    user_id    = call.from_user.id
-    username   = call.from_user.username
-    message_id = call.message.message_id
-    chat_id    = call.message.chat.id
-    data       = call.data
-
-    user = get_user(user_id)
-    if user and user["is_banned"]:
-        bot.answer_callback_query(call.id)
-        return
+def back_kb(text="⬅️ Назад", cb="back_to_menu") -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text=text, callback_data=cb)]]
+    )
 
 
-    if data == "back_to_menu":
-        user_states.pop(user_id, None)
-        edit_message(chat_id, message_id,
-                     get_profile_text(user_id, username, call.from_user.first_name),
-                     main_menu_keyboard(user_id))
-        bot.answer_callback_query(call.id)
+def currency_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="💲 USDT → RUB", callback_data="cur_USDT")],
+            [InlineKeyboardButton(text="💎 GRAM → RUB", callback_data="cur_GRAM")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_menu")],
+        ]
+    )
 
-    elif data == "my_purchases":
-        purchases = get_user_purchases(user_id)
-        line = "──────────────────"
-        # Берём последние 50 покупок
-        last_purchases = list(purchases)[-50:]
-        total_qty    = sum(p["quantity"] for p in last_purchases)
-        total_amount = round(sum(p["amount"] for p in last_purchases), 2)
 
-        text  = f"╭{line}╮\n"
-        text += f'│ <tg-emoji emoji-id="{EMOJI_PUR_HEADER}">🎟</tg-emoji> МОИ ПОКУПКИ\n'
-        text += f"├{line}┤\n"
-        if not last_purchases:
-            text += "│\n│ У вас пока нет покупок.\n│\n"
-        else:
-            text += f'│ <tg-emoji emoji-id="5258330865674494479">🎟</tg-emoji> Всего: {total_qty} шт. | {total_amount}$\n'
-        text += f"╰{line}╯"
+def anketa_kb(user_row) -> InlineKeyboardMarkup:
+    phone_ok = "✅" if user_row and user_row["phone"] else ""
+    fio_ok = "✅" if user_row and user_row["fio"] else ""
+    bank_ok = "✅" if user_row and user_row["bank"] else ""
+    rows = [
+        [InlineKeyboardButton(text=f"📞 Указать телефон {phone_ok}", callback_data="set_phone")],
+        [InlineKeyboardButton(text=f"👤 Указать ФИО {fio_ok}", callback_data="set_fio")],
+        [InlineKeyboardButton(text=f"🏦 Выбрать банк {bank_ok}", callback_data="set_bank")],
+    ]
+    if user_row and user_row["phone"] and user_row["fio"] and user_row["bank"]:
+        rows.append([InlineKeyboardButton(text="💵 Отправить USDT", callback_data="go_send")])
+    rows.append([InlineKeyboardButton(text="📊 Курсы", callback_data="show_rates")])
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
-        # Кнопки: каждая покупка отдельной строкой
-        kb = InlineKeyboardMarkup(row_width=1)
-        for i, p in enumerate(last_purchases, 1):
-            prod = get_product(p["product_key"])
-            prod_name = prod["name"] if prod else p["product_key"]
-            date_str  = str(p["purchased_at"])[:10]
-            kb.row(InlineKeyboardButton(
-                f" {i} {prod_name} | {p['amount']}$ | {date_str}",
-                callback_data="noop",
-                icon_custom_emoji_id=EMOJI_PUR_ITEM
-            ))
-        kb.row(
-            InlineKeyboardButton(" В ШОП", callback_data="catalog",
-                                 icon_custom_emoji_id=EMOJI_PUR_SHOP),
-            InlineKeyboardButton(" Назад", callback_data="back_to_menu",
-                                 icon_custom_emoji_id=EMOJI_PUR_BACK),
+
+def banks_kb() -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(text=b, callback_data=f"bank_{b}")] for b in BANKS]
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="fill_form")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def confirm_kb(req_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✔️ Подтвердить заявку", callback_data=f"confirm_{req_id}")],
+            [InlineKeyboardButton(text="❌ Отменить", callback_data=f"cancel_{req_id}")],
+        ]
+    )
+
+
+def rating_kb(req_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[
+            InlineKeyboardButton(text=str(i), callback_data=f"rate_{req_id}_{i}")
+            for i in range(1, 6)
+        ]]
+    )
+
+
+def admin_main_kb() -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text="📊 Стата", callback_data="a_stats")],
+        [InlineKeyboardButton(text="📋 Заявки", callback_data="a_requests")],
+        [InlineKeyboardButton(text="💱 Курсы", callback_data="a_rates")],
+        [InlineKeyboardButton(text="🔔 Ночной буст", callback_data="a_boost")],
+        [InlineKeyboardButton(text="👤 Юзеры", callback_data="a_users")],
+        [InlineKeyboardButton(text="🚫 Блокировки", callback_data="a_blocks")],
+        [InlineKeyboardButton(text="💬 Поддержка", callback_data="a_support")],
+        [InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast")],
+        [InlineKeyboardButton(text="⚙️ Настройки", callback_data="a_settings")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def admin_back_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="a_home")]]
+    )
+
+
+async def safe_edit(cb: CallbackQuery, text: str, kb: InlineKeyboardMarkup | None = None):
+    try:
+        await cb.message.edit_text(text, reply_markup=kb)
+    except TelegramBadRequest:
+        await cb.message.answer(text, reply_markup=kb)
+
+# ============================== USER ROUTER =================================
+
+user_router = Router(name="user")
+
+
+@user_router.message(CommandStart())
+async def cmd_start(message: Message, state: FSMContext):
+    await state.clear()
+    await db.ensure_user(message.from_user.id, message.from_user.username)
+    text = (
+        "👋 Добро пожаловать в XYLT exchange\n"
+        "💱Меняем USDT/GRAM → RUB\n"
+        "📈Лучший курс на рынке"
+    )
+    await message.answer(text, reply_markup=main_menu_kb())
+
+
+async def show_profile(user_id: int, username: str | None) -> str:
+    await db.ensure_user(user_id, username)
+    u = await db.get_user(user_id)
+    return (
+        "👤Ваш профиль\n"
+        f"👤ID: {u['user_id']}\n"
+        f"📅С нами с: {u['joined_at']}\n"
+        "📊Статистика:\n"
+        f"• Оборот: {fmt(u['turnover'])} USDT\n"
+        f"• Сумма обменов: {fmt(u['total_rub'])} ₽"
+    )
+
+
+@user_router.message(F.text == "✍️ Мои профиль")
+async def profile_handler(message: Message):
+    text = await show_profile(message.from_user.id, message.from_user.username)
+    await message.answer(text, reply_markup=back_kb())
+
+
+async def rates_text() -> str:
+    rates = await db.get_rates()
+    boosted, bonus = await is_night_boost_active()
+    settings = await db.get_settings()
+    async with db._lock:
+        cur = await db._conn.execute(
+            "SELECT COUNT(*) c FROM requests WHERE status IN "
+            "('pending_review','searching','in_progress')"
         )
-        edit_message(chat_id, message_id, text, kb)
-        bot.answer_callback_query(call.id)
+        pending = (await cur.fetchone())["c"]
 
-    elif data.startswith("purchase_detail_"):
-        purchase_id = int(data[len("purchase_detail_"):])
-        # Найти покупку по id
-        purchase = db_exec(
-            "SELECT * FROM purchases WHERE id=? AND user_id=?",
-            (purchase_id, user_id), fetchone=True
-        )
-        if not purchase:
-            bot.answer_callback_query(call.id, "Покупка не найдена", show_alert=True)
-            return
-        prod = get_product(purchase["product_key"])
-        prod_name  = prod["name"] if prod else purchase["product_key"]
-        date_str   = str(purchase["purchased_at"])[:10]
-        line = "──────────────────"
-        text  = f"╭{line}╮\n"
-        prod_emoji = prod["emoji"] if prod else "📦"
-        text += f'│ {prod_emoji} {prod_name}\n'
-        text += f"├{line}┤\n"
-        text += f"│\n"
-        text += f'│ <tg-emoji emoji-id="{EMOJI_DET_PRICE}">🎟</tg-emoji> Цена: {purchase["amount"]}$\n'
-        text += f'│ <tg-emoji emoji-id="{EMOJI_DET_DATE}">🎟</tg-emoji> Дата: {date_str}\n'
-        text += f"│\n"
-        text += f"├{line}┤\n"
-        text += f'│ <tg-emoji emoji-id="{EMOJI_DET_WAYS}">🎟</tg-emoji> СПОСОБЫ ПОЛУЧЕНИЯ:\n'
-        text += f"╰{line}╯"
-        kb = InlineKeyboardMarkup(row_width=3)
-        kb.row(
-            InlineKeyboardButton(" QR",    callback_data=f"get_qr_{purchase_id}",
-                                 icon_custom_emoji_id=EMOJI_DET_QR),
-            InlineKeyboardButton(" KOD",   callback_data=f"get_kod_{purchase_id}",
-                                 icon_custom_emoji_id=EMOJI_DET_KOD),
-            InlineKeyboardButton(" TOKEN", callback_data=f"get_token_{purchase_id}",
-                                 icon_custom_emoji_id=EMOJI_DET_TOKEN),
-        )
-        kb.row(InlineKeyboardButton(
-            " Назад к покупкам", callback_data="my_purchases",
-            icon_custom_emoji_id=EMOJI_DET_BACK
-        ))
-        edit_message(chat_id, message_id, text, kb)
-        bot.answer_callback_query(call.id)
-
-    elif data == "catalog":
-        products = get_all_products()
-        line = "──────────────────"
-        text  = f"╭{line}╮\n"
-        text += f'│ <tg-emoji emoji-id="5188212140133080599">🎟</tg-emoji> ВИТРИНА\n'
-        text += f"├{line}┤\n"
-        text += "│\n"
-        for key, p in products.items():
-            display_stock = get_display_stock(user_id, p["stock"])
-            stock_icon = '<tg-emoji emoji-id="5206607081334906820">🎟</tg-emoji>' if display_stock > 0 else '<tg-emoji emoji-id="5210952531676504517">🎟</tg-emoji>'
-            text += f"│ {p['emoji']} {p['name']}\n"
-            text += f"│ {stock_icon} {display_stock} шт.\n"
-            text += f'│ <tg-emoji emoji-id="5199527184229751349">🎟</tg-emoji> {p['price']}$\n'
-            text += "│\n"
-        text += f"├{line}┤\n"
-        text += f'│ <tg-emoji emoji-id="5199934729381502417">🎟</tg-emoji> Выбери товар\n'
-        text += f"╰{line}╯"
-        edit_message(chat_id, message_id, text, catalog_keyboard())
-        bot.answer_callback_query(call.id)
-
-    elif data == "referral":
-        u            = get_user(user_id)
-        bot_username = bot.get_me().username
-        ref_link     = f"https://t.me/{bot_username}?start={user_id}"
-        refs         = get_referrals(user_id)
-        ref_earn     = u["referral_earnings"] if u else 0
-        bal          = u["balance"] if u else 0
-        line = "──────────────────"
-        bot_username = bot_username  # уже получен выше
-        text  = f"╭{line}╮\n"
-        text += f'│ <b><tg-emoji emoji-id="5258513401784573443">🎟</tg-emoji> РЕФЕРАЛКА\n'
-        text += f"├{line}┤\n"
-        text += f"│\n"
-        text += f'│ <tg-emoji emoji-id="5463216615468324631">🎟</tg-emoji> Твоя ссылка:\n'
-        text += f"│ ┗ <code>{ref_link}</code>\n"
-        text += f"│\n"
-        text += f"├{line}┤\n"
-        text += f"│\n"
-        text += f'│ <tg-emoji emoji-id="5258513401784573443">🎟</tg-emoji> Приглашено: {len(refs)}\n'
-        text += f'│ <tg-emoji emoji-id="5199527184229751349">🎟</tg-emoji> Заработано: {ref_earn:.2f}$\n'
-        text += f'│ <tg-emoji emoji-id="5454158795729029479">🎟</tg-emoji> В балансе: {round(bal,2)}$\n'
-        text += f"│\n"
-        text += f"├{line}┤\n"
-        text += f"│\n"
-        text += f'│ <tg-emoji emoji-id="5188212140133080599">🎟</tg-emoji> Ставка: 10%\n'
-        text += f"│ ┗ с каждой покупки\n"
-        text += f"│ ┗ реферала</b>\n"
-        text += f"│\n"
-        text += f"╰{line}╯"
-        edit_message(chat_id, message_id, text, referral_keyboard())
-        bot.answer_callback_query(call.id)
-
-    elif data == "my_referrals":
-        refs = get_referrals(user_id)
-        if not refs:
-            edit_message(chat_id, message_id,
-                         " МОИ РЕФЕРАЛЫ\n\n Пока никого нет\n\nПригласите друзей!",
-                         my_referrals_keyboard(False))
-        else:
-            text = " МОИ РЕФЕРАЛЫ\n\n"
-            for i, row in enumerate(refs[:10], 1):
-                rid       = row["referral_id"]
-                purchases = get_user_purchases(rid)
-                spent     = sum(p["amount"] for p in purchases)
-                bonus     = round(spent * 0.1, 2)
-                ru        = get_user(rid)
-                rname     = ru["username"] if ru and ru["username"] else f"ID{rid}"
-                text += f"{i}. @{rname} — {len(purchases)} покупок | бонус: {bonus}$\n"
-            text += f"\n━━━━━━━━━━━━━━━\n👥 Всего: {len(refs)}"
-            edit_message(chat_id, message_id, text, my_referrals_keyboard(True))
-        bot.answer_callback_query(call.id)
-
-    elif data == "copy_ref_link":
-        bot_username = bot.get_me().username
-        ref_link = f"https://t.me/{bot_username}?start={user_id}"
-        bot.answer_callback_query(call.id, f"Ссылка: {ref_link}", show_alert=True)
-
-    elif data == "support":
-        line = "──────────────────"
-        text  = f"╭{line}╮\n"
-        text += f'│ <tg-emoji emoji-id="5199917240274673390">🎟</tg-emoji> SUPPORT\n'
-        text += f"├{line}┤\n"
-        text += f"│\n"
-        text += f'│ <tg-emoji emoji-id="5454130320095862431">🎟</tg-emoji> Админ: @{SUPPORT_USERNAME}\n'
-        text += f'│ <tg-emoji emoji-id="5258503720928288433">🎟</tg-emoji> Ответ: 10 мин - 24 часов\n'
-        text += f"│\n"
-        text += f"╰{line}╯"
-        edit_message(chat_id, message_id, text, support_keyboard())
-        bot.answer_callback_query(call.id)
-
-    elif data == "terms":
-        text = """📜 ПРАВИЛА И ОФЕРТА
-
-1️⃣ Токены НЕ хранятся заранее
-Берутся ТОЛЬКО в момент покупки. Сохраните их сразу.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-2️⃣ Запрещено использовать аккаунты для мошенничества
-• Не использовать для обмана / фишинга / спама
-• Не нарушать законы вашей страны
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-3️⃣ Замена авторегов в течение 5 часов
-Если оказался нерабочим — замена при наличии скриншота ошибки.
-Web Token и JSON замене не подлежат если были рабочими.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-4️⃣ Возврат денег не предусмотрен. Все товары — цифровые.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-5️⃣ Конфиденциальность
-Ваши данные не передаются третьим лицам.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-6️⃣ Минимальный возраст: 18 лет.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-7️⃣ Продолжая использовать бота вы соглашаетесь со всеми правилами."""
-        edit_message(chat_id, message_id, text, terms_keyboard())
-        bot.answer_callback_query(call.id)
-
-    elif data == "balance":
-        u    = get_user(user_id)
-        bal  = round(u["balance"], 2) if u else 0.0
-        name = call.from_user.first_name or username or "Пользователь"
-        line = "──────────────────"
-        text  = f"╭{line}╮\n"
-        text += f'│ <b><tg-emoji emoji-id="5199527184229751349">🎟</tg-emoji> ПОПОЛНЕНИЕ\n'
-        text += f"├{line}┤\n"
-        text += f"│\n"
-        text += f'│ <tg-emoji emoji-id="5454158795729029479">🎟</tg-emoji> Твой баланс: {bal}$\n'
-        text += f"│\n"
-        text += f"├{line}┤\n"
-        text += f"│\n"
-        text += f'│ <tg-emoji emoji-id="5454060067315801997">🎟</tg-emoji> Выбери сумму:</b>\n'
-        text += f"│\n"
-        text += f"╰{line}╯"
-        edit_message(chat_id, message_id, text, balance_keyboard())
-        bot.answer_callback_query(call.id)
-
-    elif data == "deposit_menu":
-        u   = get_user(user_id)
-        bal = round(u["balance"], 2) if u else 0.0
-        line = "──────────────────"
-        text  = f"╭{line}╮\n"
-        text += f"│ 💰 ПОПОЛНЕНИЕ\n"
-        text += f"├{line}┤\n"
-        text += f"│\n"
-        text += f"│ 💎 Твой баланс: {bal}$\n"
-        text += f"│\n"
-        text += f"├{line}┤\n"
-        text += f"│\n"
-        text += f"│ 🔽 Выбери сумму:\n"
-        text += f"│\n"
-        text += f"╰{line}╯"
-        edit_message(chat_id, message_id, text, balance_keyboard())
-        bot.answer_callback_query(call.id)
-
-    elif data.startswith("buy_"):
-        product_key = data[4:]
-        product = get_product(product_key)
-        if not product:
-            bot.answer_callback_query(call.id, "Товар не найден", show_alert=True)
-            return
-        display_stock = get_display_stock(user_id, product["stock"])
-        if display_stock <= 0:
-            bot.answer_callback_query(call.id, "❌ Товар закончился!", show_alert=True)
-            return
-        items = get_all_items(product_key)
-        if not items:
-            bot.answer_callback_query(call.id, "❌ Контент для этого товара ещё не добавлен!", show_alert=True)
-            return
-        line = "──────────────────"
-        text  = f"╭{line}╮\n"
-        text += f'│ <b>{product["emoji"]} {product["name"]}\n'
-        text += f"├{line}┤\n"
-        text += f"│\n"
-        text += f'│ <tg-emoji emoji-id="5199527184229751349">🎟</tg-emoji> Цена: {product['price']}$ за шт\n'
-        text += f'│ <tg-emoji emoji-id="5226828629178080100">🎟</tg-emoji> В наличии: {display_stock} шт\n'
-        text += f"│\n"
-        text += f"├{line}┤\n"
-        text += f'│ <tg-emoji emoji-id="5190810548102516273">🎟</tg-emoji> Введите количество:\n'
-        text += f'│ <tg-emoji emoji-id="5226513232549664618">🎟</tg-emoji> Минимум: 5 шт</b>\n'
-        text += f"╰{line}╯"
-        edit_message(chat_id, message_id, text, buy_product_keyboard())
-        bot.answer_callback_query(call.id)
-        user_states[user_id] = {
-            "awaiting_quantity": True,
-            "product_key": product_key,
-            "chat_id": chat_id,
-            "message_id": message_id
-        }
-
-    elif data.startswith("confirm_buy_"):
-        rest        = data[len("confirm_buy_"):]
-        last_sep    = rest.rfind("_")
-        product_key = rest[:last_sep]
-        quantity    = int(rest[last_sep + 1:])
-        product     = get_product(product_key)
-        if not product:
-            bot.answer_callback_query(call.id, "Товар не найден", show_alert=True)
-            return
-        total_price = round(product["price"] * quantity, 2)
-        bal         = get_user_balance(user_id)
-        if bal < total_price:
-            bot.answer_callback_query(call.id, "❌ Недостаточно средств!", show_alert=True)
-            return
-        if product["stock"] < quantity:
-            bot.answer_callback_query(call.id, f"❌ В наличии только {product['stock']} шт!", show_alert=True)
-            return
-
-        # Получаем весь фиксированный набор текстов товара
-        items = get_all_items(product_key)
-        if not items:
-            bot.answer_callback_query(call.id, "❌ Контент товара не настроен! Обратитесь в поддержку.", show_alert=True)
-            return
-
-        if not deduct_balance(user_id, total_price):
-            bot.answer_callback_query(call.id, "❌ Ошибка списания!", show_alert=True)
-            return
-
-        # Уменьшаем stock
-        update_product_field(product_key, "stock", product["stock"] - quantity)
-        add_purchase(user_id, product_key, quantity, total_price)
-
-        u = get_user(user_id)
-        referrer_id = u["referrer_id"] if u else None
-        if referrer_id:
-            bonus = round(total_price * 0.1, 2)
-            add_referral_earning(referrer_id, bonus)
-            try:
-                bot.send_message(int(referrer_id),
-                    f"🎁 Ваш реферал купил {product['name']} x{quantity}!\n💰 Начислено: +{bonus}$",
-                    parse_mode="HTML")
-            except:
-                pass
-
-        for aid in ADMIN_IDS:
-            # Не отправляем уведомление если админ находится в режиме UDV
-            if is_udv_mode_enabled(aid):
-                continue
-            try:
-                bot.send_message(aid,
-                    f"🛒 НОВАЯ ПОКУПКА!\n\n👤 ID{user_id} @{username}\n"
-                    f"📦 {product['emoji']} {product['name']} x{quantity}\n💰 Сумма: {total_price}$",
-                    parse_mode="HTML")
-            except:
-                pass
-
-        # Находим id только что созданной покупки
-        last_purchase = db_exec(
-            "SELECT id FROM purchases WHERE user_id=? ORDER BY id DESC LIMIT 1",
-            (user_id,), fetchone=True
-        )
-        new_purchase_id = last_purchase["id"] if last_purchase else 0
-
-        # Показываем экран выбора способа получения
-        line = "──────────────────"
-        confirm_text  = f"╭{line}╮\n"
-        confirm_text += f'│ {product["emoji"]} {product["name"]}\n'
-        confirm_text += f"├{line}┤\n"
-        confirm_text += f"│\n"
-        confirm_text += f'│ <tg-emoji emoji-id="{EMOJI_DET_PRICE}">🎟</tg-emoji> Сумма: {total_price}$\n'
-        confirm_text += f'│ <tg-emoji emoji-id="{EMOJI_DET_DATE}">🎟</tg-emoji> Количество: {quantity} шт\n'
-        confirm_text += f"│\n"
-        confirm_text += f"├{line}┤\n"
-        confirm_text += f'│ <tg-emoji emoji-id="{EMOJI_DET_WAYS}">🎟</tg-emoji> СПОСОБЫ ПОЛУЧЕНИЯ:\n'
-        confirm_text += f"╰{line}╯"
-
-        kb = InlineKeyboardMarkup(row_width=3)
-        kb.row(
-            InlineKeyboardButton(" QR",    callback_data=f"get_qr_{new_purchase_id}",
-                                 icon_custom_emoji_id=EMOJI_DET_QR),
-            InlineKeyboardButton(" KOD",   callback_data=f"get_kod_{new_purchase_id}",
-                                 icon_custom_emoji_id=EMOJI_DET_KOD),
-            InlineKeyboardButton(" TOKEN", callback_data=f"get_token_{new_purchase_id}",
-                                 icon_custom_emoji_id=EMOJI_DET_TOKEN),
-        )
-        kb.row(InlineKeyboardButton(
-            " Назад", callback_data="back_to_menu",
-            icon_custom_emoji_id=EMOJI_BACK
-        ))
-        edit_message(chat_id, message_id, confirm_text, kb)
-        bot.answer_callback_query(call.id, "✅ Покупка успешна!", show_alert=True)
-
-    elif data.startswith("get_token_"):
-        purchase_id = int(data[len("get_token_"):])
-        purchase = db_exec(
-            "SELECT * FROM purchases WHERE id=? AND user_id=?",
-            (purchase_id, user_id), fetchone=True
-        )
-        if not purchase:
-            bot.answer_callback_query(call.id, "Покупка не найдена", show_alert=True)
-            return
-        items = get_all_items(purchase["product_key"])
-        if not items or is_udv_mode_enabled(user_id):
-            bot.answer_callback_query(call.id)
-            return
-        import random
-        quantity = purchase["quantity"]
-        prod = get_product(purchase["product_key"])
-        prod_name = prod["name"] if prod else purchase["product_key"]
-        prod_emoji = prod["emoji"] if prod else "📦"
-        if len(items) == 1:
-            distribution = [quantity]
-        else:
-            remaining = quantity
-            distribution = []
-            for i in range(len(items) - 1):
-                max_part = remaining - (len(items) - i - 1)
-                part = random.randint(1, max(1, max_part))
-                distribution.append(part)
-                remaining -= part
-            distribution.append(remaining)
-            random.shuffle(distribution)
-        for item_content, qty in zip(items, distribution):
-            try:
-                bot.send_message(
-                    user_id,
-                    f"📦 <b>{prod_emoji} {prod_name}</b>\n"
-                    f"━━━━━━━━━━━━━━━\n"
-                    f"<code>{item_content}</code> | x{qty}",
-                    parse_mode="HTML"
-                )
-            except:
-                try:
-                    bot.send_message(user_id, f"{item_content} | x{qty}")
-                except:
-                    pass
-        # Делаем кнопки мёртвыми — только Назад остаётся
-        dead_kb = InlineKeyboardMarkup(row_width=3)
-        dead_kb.row(
-            InlineKeyboardButton(" QR",    callback_data="noop",
-                                 icon_custom_emoji_id=EMOJI_DET_QR),
-            InlineKeyboardButton(" KOD",   callback_data="noop",
-                                 icon_custom_emoji_id=EMOJI_DET_KOD),
-            InlineKeyboardButton(" TOKEN", callback_data="noop",
-                                 icon_custom_emoji_id=EMOJI_DET_TOKEN),
-        )
-        dead_kb.row(InlineKeyboardButton(
-            " Назад", callback_data="back_to_menu",
-            icon_custom_emoji_id=EMOJI_BACK
-        ))
-        try:
-            bot.edit_message_reply_markup(chat_id=chat_id, message_id=message_id,
-                                          reply_markup=dead_kb)
-        except:
-            pass
-        bot.answer_callback_query(call.id, "✅ Контент отправлен!", show_alert=True)
-
-    elif data.startswith("get_qr_") or data.startswith("get_kod_"):
-        bot.answer_callback_query(
-            call.id,
-            "⚠️ Ошибка , временно отключено ⚠️",
-            show_alert=True
+    boost_line = ""
+    if settings["night_boost_enabled"]:
+        boost_line = (
+            f"🔥 Ночной буст: {settings['night_boost_start']}–{settings['night_boost_end']} МСК "
+            f"+ {settings['night_boost_bonus']}₽ к курсу"
+            + (" (сейчас активен)" if boosted else "")
         )
 
-    elif data.startswith("cancel_buy"):
-        user_states.pop(user_id, None)
-        edit_message(chat_id, message_id, "❌ Покупка отменена.", cancel_buy_keyboard())
-        bot.answer_callback_query(call.id)
-
-    elif data == "deposit_custom":
-        bot.send_message(user_id, " ПОПОЛНЕНИЕ БАЛАНСА\n\nВведите сумму (от 1$ до 5000$):")
-        user_states[user_id] = {"awaiting_custom_deposit": True}
-        bot.answer_callback_query(call.id)
-
-    elif data.startswith("deposit_") and data != "deposit_custom":
-        try:
-            amount = float(data.split("_")[1])
-        except (IndexError, ValueError):
-            bot.answer_callback_query(call.id, "Ошибка суммы", show_alert=True)
-            return
-        process_payment(chat_id, user_id, amount, message_id)
-        bot.answer_callback_query(call.id)
-
-    elif data == "cancel_payment":
-        to_remove = [k for k, v in active_invoices.items() if v["user_id"] == user_id]
-        for k in to_remove:
-            active_invoices.pop(k, None)
-        edit_message(chat_id, message_id, "❌ Платёж отменён.", cancel_payment_keyboard())
-        bot.answer_callback_query(call.id)
-
-    elif data.startswith("items_add_"):
-        if not is_admin(user_id): return
-        product_key = data[len("items_add_"):]
-        p = get_product(product_key)
-        stats = get_items_stats(product_key)
-        bot.send_message(user_id,
-            f"📦 ДОБАВЛЕНИЕ КОНТЕНТА\n\n"
-            f"Товар: {p['emoji']} {p['name']}\n"
-            f"Текстов в наборе сейчас: {stats['total']} шт\n\n"
-            f"Отправьте тексты — каждый с новой строки.\n"
-            f"Они добавятся к существующему набору.\n"
-            f"Весь набор выдаётся каждому покупателю целиком.\n\n"
-            f"Пример:\n"
-            f"<code>login1:password1\n"
-            f"login2:password2\n"
-            f"token_abc123</code>",
-            parse_mode="HTML"
-        )
-        user_states[user_id] = {
-            "awaiting_items": product_key,
-            "chat_id": chat_id,
-            "message_id": message_id
-        }
-        bot.answer_callback_query(call.id)
-
-    elif data.startswith("items_stat_"):
-        if not is_admin(user_id): return
-        product_key = data[len("items_stat_"):]
-        p = get_product(product_key)
-        stats = get_items_stats(product_key)
-        bot.answer_callback_query(call.id,
-            f"📊 {p['emoji']} {p['name']}\n"
-            f"📝 Текстов в наборе: {stats['total']} шт\n"
-            f"📦 Остаток (stock): {p['stock']} шт\n"
-            f"ℹ️ Весь набор выдаётся каждому покупателю",
-            show_alert=True)
-
-    elif data == "add_items_select":
-        if not is_admin(user_id): return
-        edit_message(chat_id, message_id,
-                     "📦 ДОБАВИТЬ КОНТЕНТ\n\nВыберите товар:",
-                     manage_product_list_keyboard("items_add_"))
-        bot.answer_callback_query(call.id)
-
-    elif data == "items_stats_select":
-        if not is_admin(user_id): return
-        products = get_all_products()
-        text = "📊 СТАТИСТИКА КОНТЕНТА\n\n"
-        for key, p in products.items():
-            stats = get_items_stats(key)
-            text += (f"{p['emoji']} {p['name']}\n"
-                     f"  📝 Текстов в наборе: {stats['total']} | 📦 Stock: {p['stock']}\n\n")
-        edit_message(chat_id, message_id, text, back_to_admin_keyboard())
-        bot.answer_callback_query(call.id)
-
-    elif data == "clear_items_select":
-        if not is_admin(user_id): return
-        edit_message(chat_id, message_id,
-                     "🗑 ОЧИСТИТЬ КОНТЕНТ\n\nВыберите товар:",
-                     manage_product_list_keyboard("clear_items_"))
-        bot.answer_callback_query(call.id)
-
-    elif data.startswith("clear_items_"):
-        if not is_admin(user_id): return
-        product_key = data[len("clear_items_"):]
-        p = get_product(product_key)
-        stats = get_items_stats(product_key)
-        delete_product_items(product_key)
-        bot.answer_callback_query(call.id,
-            f"🗑 Удалено {stats['total']} текстов из набора '{p['name']}'",
-            show_alert=True)
-        products = get_all_products()
-        text = "📦 УПРАВЛЕНИЕ ТОВАРАМИ\n\n"
-        for key, pr in products.items():
-            s = get_items_stats(key)
-            text += f"{pr['emoji']} {pr['name']} | 💰{pr['price']}$ | 📦{pr['stock']} шт | 📝{s['total']} текстов\n"
-        text += "\n━━━━━━━━━━━━━━━\nВыберите действие:"
-        edit_message(chat_id, message_id, text, admin_products_keyboard())
-
-
-    elif data == "admin_panel":
-        if not is_admin(user_id):
-            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
-            return
-        text = ("👑 АДМИН ПАНЕЛЬ | MAX\n\n━━━━━━━━━━━━━━━\n\n"
-                "1 — 📦 Товары\n2 — 👥 Пользователи\n"
-                "3 — 💰 Пополнения\n4 — 📢 Рассылка\n"
-                "5 — 📊 Статистика\n6 — ⚠️ Бан\n\n━━━━━━━━━━━━━━━")
-        edit_message(chat_id, message_id, text, admin_keyboard())
-        bot.answer_callback_query(call.id)
-
-    elif data == "admin_products":
-        if not is_admin(user_id):
-            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
-            return
-        products = get_all_products()
-        text = "📦 УПРАВЛЕНИЕ ТОВАРАМИ\n\n"
-        for key, p in products.items():
-            stats = get_items_stats(key)
-            text += f"{p['emoji']} {p['name']} | 💰{p['price']}$ | 📦{stats['free']} свободно\n"
-        text += "\n━━━━━━━━━━━━━━━\nВыберите действие:"
-        edit_message(chat_id, message_id, text, admin_products_keyboard())
-        bot.answer_callback_query(call.id)
-
-    elif data == "add_product":
-        if not is_admin(user_id):
-            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
-            return
-        bot.send_message(user_id,
-            "➕ ДОБАВЛЕНИЕ ТОВАРА\n\nФормат:\n<code>id|название|цена|эмодзи|описание</code>\n\n"
-            "Пример:\n<code>new_token|Новый Токен|5|⭐|Описание товара</code>\n\n"
-            "Контент (тексты для выдачи) добавляется отдельно через «Добавить контент».",
-            parse_mode="HTML")
-        user_states[user_id] = {"awaiting_add_product": True}
-        bot.answer_callback_query(call.id)
-
-    elif data == "manage_product_list":
-        if not is_admin(user_id):
-            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
-            return
-        edit_message(chat_id, message_id, "✏️ ВЫБЕРИТЕ ТОВАР ДЛЯ УПРАВЛЕНИЯ:",
-                     manage_product_list_keyboard("manage_select_"))
-        bot.answer_callback_query(call.id)
-
-    elif data.startswith("manage_select_"):
-        if not is_admin(user_id):
-            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
-            return
-        product_key = data[len("manage_select_"):]
-        product = get_product(product_key)
-        if not product:
-            bot.answer_callback_query(call.id, "Товар не найден", show_alert=True)
-            return
-        edit_message(chat_id, message_id,
-                     product_info_text(product_key, product),
-                     product_manage_keyboard(product_key))
-        bot.answer_callback_query(call.id)
-
-    elif data.startswith("prod_setprice_"):
-        if not is_admin(user_id): return
-        product_key = data[len("prod_setprice_"):]
-        p = get_product(product_key)
-        bot.send_message(user_id,
-            f"💰 ИЗМЕНИТЬ ЦЕНУ\n\nТовар: {p['emoji']} {p['name']}\n"
-            f"Текущая цена: {p['price']}$\n\nВведите новую цену (например: 3.50):",
-            parse_mode="HTML")
-        user_states[user_id] = {"prod_setprice": product_key,
-                                "chat_id": chat_id, "message_id": message_id}
-        bot.answer_callback_query(call.id)
-
-    elif data.startswith("prod_setname_"):
-        if not is_admin(user_id): return
-        product_key = data[len("prod_setname_"):]
-        p = get_product(product_key)
-        bot.send_message(user_id,
-            f"✏️ ИЗМЕНИТЬ НАЗВАНИЕ\n\nТовар: {p['emoji']} {p['name']}\n\nВведите новое название:",
-            parse_mode="HTML")
-        user_states[user_id] = {"prod_setname": product_key,
-                                "chat_id": chat_id, "message_id": message_id}
-        bot.answer_callback_query(call.id)
-
-    elif data.startswith("prod_setdesc_"):
-        if not is_admin(user_id): return
-        product_key = data[len("prod_setdesc_"):]
-        p = get_product(product_key)
-        bot.send_message(user_id,
-            f"📝 ИЗМЕНИТЬ ОПИСАНИЕ\n\nТовар: {p['emoji']} {p['name']}\n"
-            f"Текущее: {p['description']}\n\nВведите новое описание:",
-            parse_mode="HTML")
-        user_states[user_id] = {"prod_setdesc": product_key,
-                                "chat_id": chat_id, "message_id": message_id}
-        bot.answer_callback_query(call.id)
-
-    elif data.startswith("prod_setemoji_"):
-        if not is_admin(user_id): return
-        product_key = data[len("prod_setemoji_"):]
-        p = get_product(product_key)
-        bot.send_message(user_id,
-            f"🎭 ИЗМЕНИТЬ ЭМОДЗИ\n\nТовар: {p['emoji']} {p['name']}\n\nВведите новый эмодзи:",
-            parse_mode="HTML")
-        user_states[user_id] = {"prod_setemoji": product_key,
-                                "chat_id": chat_id, "message_id": message_id}
-        bot.answer_callback_query(call.id)
-
-    elif data.startswith("prod_setstock_"):
-        if not is_admin(user_id): return
-        product_key = data[len("prod_setstock_"):]
-        p = get_product(product_key)
-        bot.send_message(user_id,
-            f"🔢 ИЗМЕНИТЬ ОСТАТОК\n\n"
-            f"Товар: {p['emoji']} {p['name']}\n"
-            f"Текущий остаток: {p['stock']} шт\n\n"
-            f"Введите количество:\n"
-            f"<code>100</code> — установить 100 шт\n"
-            f"<code>+50</code> — добавить 50 шт",
-            parse_mode="HTML")
-        user_states[user_id] = {"prod_setstock": product_key,
-                                "chat_id": chat_id, "message_id": message_id}
-        bot.answer_callback_query(call.id)
-
-    elif data.startswith("prod_full_"):
-        if not is_admin(user_id): return
-        product_key = data[len("prod_full_"):]
-        p = get_product(product_key)
-        bot.send_message(user_id,
-            f"📋 ПОЛНОЕ РЕДАКТИРОВАНИЕ\n\nТовар: {p['emoji']} {p['name']}\n\n"
-            f"Формат: <code>название|цена|эмодзи|описание</code>\n\n"
-            f"Пример:\n<code>Новый Токен|5.00|⭐|Новое описание</code>",
-            parse_mode="HTML")
-        user_states[user_id] = {"awaiting_edit_product": product_key,
-                                "chat_id": chat_id, "message_id": message_id}
-        bot.answer_callback_query(call.id)
-
-    elif data == "delete_product":
-        if not is_admin(user_id):
-            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
-            return
-        edit_message(chat_id, message_id, "❌ УДАЛЕНИЕ ТОВАРА\n\nВыберите товар:",
-                     manage_product_list_keyboard("delete_select_"))
-        bot.answer_callback_query(call.id)
-
-    elif data.startswith("delete_select_"):
-        if not is_admin(user_id):
-            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
-            return
-        product_key = data[len("delete_select_"):]
-        p = get_product(product_key)
-        if p:
-            delete_product(product_key)
-            bot.answer_callback_query(call.id, f"✅ Товар '{p['name']}' удалён!", show_alert=True)
-        else:
-            bot.answer_callback_query(call.id, "❌ Товар не найден!", show_alert=True)
-        products = get_all_products()
-        text = "📦 УПРАВЛЕНИЕ ТОВАРАМИ\n\n"
-        for key, pr in products.items():
-            stats = get_items_stats(key)
-            text += f"{pr['emoji']} {pr['name']} | 💰{pr['price']}$ | 📦{stats['free']} свободно\n"
-        text += "\n━━━━━━━━━━━━━━━\nВыберите действие:"
-        edit_message(chat_id, message_id, text, admin_products_keyboard())
-
-    elif data == "admin_users":
-        if not is_admin(user_id):
-            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
-            return
-        edit_message(chat_id, message_id,
-                     "👥 УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ\n\nВыберите действие:",
-                     admin_users_keyboard())
-        bot.answer_callback_query(call.id)
-
-    elif data == "admin_user_list":
-        if not is_admin(user_id):
-            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
-            return
-        users = get_all_users()
-        text  = "📋 СПИСОК ПОЛЬЗОВАТЕЛЕЙ\n\n"
-        for i, u in enumerate(users[:20], 1):
-            status = "🚫" if u["is_banned"] else ("✅" if u["is_approved"] else "⏳")
-            text += (f"{i}. {status} ID:{u['user_id']} | "
-                     f"@{u['username'] or 'нет'} | "
-                     f"Баланс: {round(u['balance'],2)}$\n")
-        text += f"\n━━━━━━━━━━━━━━━\n👥 Всего: {len(users)}"
-        edit_message(chat_id, message_id, text, back_to_admin_users_keyboard())
-        bot.answer_callback_query(call.id)
-
-    elif data == "admin_find_user":
-        if not is_admin(user_id):
-            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
-            return
-        bot.send_message(user_id, "🔍 Введите ID или @username:")
-        user_states[user_id] = {"awaiting_find_user": True}
-        bot.answer_callback_query(call.id)
-
-    elif data == "admin_deposits":
-        if not is_admin(user_id):
-            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
-            return
-        edit_message(chat_id, message_id,
-                     "💰 УПРАВЛЕНИЕ ПОПОЛНЕНИЯМИ\n\nВыберите действие:",
-                     admin_deposits_keyboard())
-        bot.answer_callback_query(call.id)
-
-    elif data == "admin_manual_deposit":
-        if not is_admin(user_id):
-            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
-            return
-        bot.send_message(user_id,
-            "💰 РУЧНОЕ ЗАЧИСЛЕНИЕ\n\nФормат:\n<code>ID|сумма</code>\n\n"
-            "Пример:\n<code>123456789|10</code>",
-            parse_mode="HTML")
-        user_states[user_id] = {"awaiting_manual_deposit": True}
-        bot.answer_callback_query(call.id)
-
-    elif data == "admin_mailing":
-        if not is_admin(user_id):
-            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
-            return
-        bot.send_message(user_id, "📢 Введите текст рассылки:\n\n(Для отмены: /cancel)")
-        user_states[user_id] = {"awaiting_mailing": True}
-        bot.answer_callback_query(call.id)
-
-    elif data == "admin_stats":
-        if not is_admin(user_id):
-            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
-            return
-        users     = get_all_users()
-        purchases = get_all_purchases()
-        products  = get_all_products()
-        text = (f"📊 СТАТИСТИКА\n\n━━━━━━━━━━━━━━━\n"
-                f"👥 Пользователей: {len(users)}\n"
-                f"✅ Одобрено: {sum(1 for u in users if u['is_approved'])}\n"
-                f"🚫 Заблокировано: {sum(1 for u in users if u['is_banned'])}\n"
-                f"📦 Покупок: {len(purchases)}\n"
-                f"💰 Доход: {round(sum(p['amount'] for p in purchases), 2)}$\n"
-                f"━━━━━━━━━━━━━━━\n\n📦 КОНТЕНТ:\n")
-        for key, p in products.items():
-            stats = get_items_stats(key)
-            text += (f"{p['emoji']} {p['name']}: "
-                     f"📦{stats['free']} свободно | ✅{stats['used']} выдано | {p['price']}$\n")
-        edit_message(chat_id, message_id, text, back_to_admin_keyboard())
-        bot.answer_callback_query(call.id)
-
-    elif data == "admin_ban":
-        if not is_admin(user_id):
-            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
-            return
-        bot.send_message(user_id, "⚠️ БАН/РАЗБАН\n\nВведите ID пользователя:")
-        user_states[user_id] = {"awaiting_ban": True}
-        bot.answer_callback_query(call.id)
-
+    t1, t2, t3 = rates["usdt_tier1"], rates["usdt_tier2"], rates["usdt_tier3"]
+    if boosted:
+        t1, t2, t3 = t1 + bonus, t2 + bonus, t3 + bonus
+        gram = rates["gram_rate"] + bonus
     else:
-        bot.answer_callback_query(call.id)
+        gram = rates["gram_rate"]
 
-@bot.message_handler(func=lambda message: True)
-def handle_message(message):
-    user_id = message.from_user.id
-    text    = message.text.strip() if message.text else ""
+    text = (
+        "💱 Актуальные курсы XYLT\n\n"
+        "💎 USDT/GRAM → RUB\n"
+        f"• до 150$: {t1:.2f} ₽/$\n"
+        f"• 150–300$: {t2:.2f} ₽/$\n"
+        f"• 300$+: {t3:.2f} ₽/$\n"
+        f"• GRAM: {gram:.2f} ₽\n\n"
+        f"⌛ В обработке: {pending} заявок\n"
+    )
+    if boost_line:
+        text += boost_line + "\n"
+    text += (
+        "\n💰 Минималка:\n"
+        f"• USDT: {rates['min_usdt']} USDT\n"
+        f"• GRAM: {rates['min_gram']} GRAM "
+        "( бот сам высчитывает сумму кратное 1100₽ )\n\n"
+        "🔜 Работаем 24/7"
+    )
+    return text
 
-    user = get_user(user_id)
-    if user and user["is_banned"]:
+
+@user_router.message(F.text == "📊 Курсы")
+async def rates_handler(message: Message):
+    await message.answer(await rates_text(), reply_markup=back_kb())
+
+
+@user_router.callback_query(F.data == "show_rates")
+async def rates_cb(cb: CallbackQuery):
+    await cb.answer()
+    await cb.message.answer(await rates_text(), reply_markup=back_kb())
+
+
+@user_router.message(F.text == "💭 Поддержка")
+async def support_handler(message: Message):
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[[
+            InlineKeyboardButton(text="💬 Написать в поддержку",
+                                  url=f"https://t.me/{SUPPORT_USERNAME}")
+        ]]
+    )
+    await message.answer(
+        "💭 Поддержка\nЕсли у вас вопрос по обмену — напишите нам напрямую:",
+        reply_markup=kb,
+    )
+
+
+@user_router.callback_query(F.data == "back_to_menu")
+async def back_to_menu_cb(cb: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await cb.answer()
+    await safe_edit(cb, "Главное меню 👇")
+
+
+# ---- Обмен ----
+
+@user_router.message(F.text == "💱 Обменять")
+async def exchange_start(message: Message, state: FSMContext):
+    await state.set_state(ExchangeFlow.choosing_currency)
+    await message.answer(
+        "💱 Выберите валюту для обмена\nОтдаёте → Получаете",
+        reply_markup=currency_kb(),
+    )
+
+
+@user_router.callback_query(F.data.startswith("cur_"))
+async def choose_currency(cb: CallbackQuery, state: FSMContext):
+    currency = cb.data.split("_", 1)[1]
+    await state.update_data(currency=currency)
+    await cb.answer()
+    text = (
+        f"📝 Предоставьте реквизиты для обмена {currency}\n"
+        "Заполните анкету — это быстро."
+    )
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="➡️ Заполнить", callback_data="fill_form")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_menu")],
+        ]
+    )
+    await safe_edit(cb, text, kb)
+
+
+@user_router.callback_query(F.data == "fill_form")
+async def fill_form(cb: CallbackQuery, state: FSMContext):
+    await state.set_state(ExchangeFlow.filling_form)
+    await cb.answer()
+    user = await db.get_user(cb.from_user.id)
+    phone = user["phone"] if user and user["phone"] else "не указан"
+    fio = user["fio"] if user and user["fio"] else "не указано"
+    bank = user["bank"] if user and user["bank"] else "не выбран"
+    text = (
+        "✍️ Анкета обмена\nЗаполните по шагам:\n\n"
+        f"📞 Телефон — {phone}\n"
+        f"👤 ФИО — {fio}\n"
+        f"🏦 Банк — {bank}"
+    )
+    await safe_edit(cb, text, anketa_kb(user))
+
+
+@user_router.callback_query(F.data == "set_phone")
+async def set_phone_cb(cb: CallbackQuery, state: FSMContext):
+    await state.set_state(ExchangeFlow.waiting_phone)
+    await cb.answer()
+    await cb.message.answer("📞 Отправьте номер телефона в формате +79991234567")
+
+
+@user_router.message(ExchangeFlow.waiting_phone)
+async def set_phone_value(message: Message, state: FSMContext):
+    phone = message.text.strip()
+    if not PHONE_RE.match(phone):
+        await message.answer("⚠️ Похоже, номер некорректный. Введите ещё раз, например +79991234567")
+        return
+    await db.update_user_field(message.from_user.id, "phone", phone)
+    await state.set_state(ExchangeFlow.filling_form)
+    user = await db.get_user(message.from_user.id)
+    await message.answer("✅ Телефон сохранён.", reply_markup=anketa_kb(user))
+
+
+@user_router.callback_query(F.data == "set_fio")
+async def set_fio_cb(cb: CallbackQuery, state: FSMContext):
+    await state.set_state(ExchangeFlow.waiting_fio)
+    await cb.answer()
+    await cb.message.answer("👤 Введите ФИО получателя перевода (как в банке)")
+
+
+@user_router.message(ExchangeFlow.waiting_fio)
+async def set_fio_value(message: Message, state: FSMContext):
+    fio = message.text.strip()
+    if len(fio.split()) < 2 or len(fio) > 100:
+        await message.answer("⚠️ Введите ФИО полностью, например: Иванов Иван Иванович")
+        return
+    await db.update_user_field(message.from_user.id, "fio", fio)
+    await state.set_state(ExchangeFlow.filling_form)
+    user = await db.get_user(message.from_user.id)
+    await message.answer("✅ ФИО сохранено.", reply_markup=anketa_kb(user))
+
+
+@user_router.callback_query(F.data == "set_bank")
+async def set_bank_cb(cb: CallbackQuery, state: FSMContext):
+    await state.set_state(ExchangeFlow.waiting_bank)
+    await cb.answer()
+    await safe_edit(cb, "🏦 Выберите банк для получения перевода:", banks_kb())
+
+
+@user_router.callback_query(F.data.startswith("bank_"))
+async def set_bank_value(cb: CallbackQuery, state: FSMContext):
+    bank = cb.data.split("_", 1)[1]
+    await db.update_user_field(cb.from_user.id, "bank", bank)
+    await state.set_state(ExchangeFlow.filling_form)
+    await cb.answer("Банк сохранён")
+    user = await db.get_user(cb.from_user.id)
+    text = (
+        "✍️ Анкета обмена\nЗаполните по шагам:\n\n"
+        f"📞 Телефон — {user['phone'] or 'не указан'}\n"
+        f"👤 ФИО — {user['fio'] or 'не указано'}\n"
+        f"🏦 Банк — {user['bank']}"
+    )
+    await safe_edit(cb, text, anketa_kb(user))
+
+
+@user_router.callback_query(F.data == "go_send")
+async def go_send(cb: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    currency = data.get("currency", "USDT")
+    rates = await db.get_rates()
+    min_amount = rates["min_usdt"] if currency == "USDT" else rates["min_gram"]
+    await state.set_state(ExchangeFlow.waiting_receipt)
+    await cb.answer()
+    text = (
+        f"💸 Отправьте {currency} и пришлите сюда чек из CryptoBot\n\n"
+        f"💵 Минимальная сумма: {min_amount} {currency}\n\n"
+        "После оплаты пришлите чек (переслать сообщение с чеком, скриншот "
+        "или укажите сумму текстом)."
+    )
+    await safe_edit(cb, text, back_kb("⬅️ Назад", "fill_form"))
+
+
+AMOUNT_RE = re.compile(r"(\d+(?:[.,]\d+)?)")
+
+
+@user_router.message(ExchangeFlow.waiting_receipt)
+async def receive_receipt(message: Message, state: FSMContext, bot: Bot):
+    data = await state.get_data()
+    currency = data.get("currency", "USDT")
+    user = await db.get_user(message.from_user.id)
+    if not (user and user["phone"] and user["fio"] and user["bank"]):
+        await message.answer("⚠️ Сначала заполните анкету полностью.")
         return
 
-    if text == "/cancel":
-        user_states.pop(user_id, None)
-        bot.send_message(user_id, "❌ Действие отменено")
-        send_main_menu(message)
+    amount_guess = None
+    raw_text = message.text or message.caption or ""
+    match = AMOUNT_RE.search(raw_text.replace(",", "."))
+    if match:
+        try:
+            amount_guess = float(match.group(1))
+        except ValueError:
+            amount_guess = None
+
+    req_id = await db.create_request(
+        message.from_user.id, currency, user["fio"], user["phone"], user["bank"]
+    )
+    await state.clear()
+
+    await message.answer(
+        f"🔎 Чек получен, заявка #{req_id} отправлена на проверку.\n"
+        "Обычно это занимает ~3 мин.",
+    )
+
+    # уведомление админам
+    caption = (
+        f"🆕 Новая заявка #{req_id}\n"
+        f"Пользователь: {message.from_user.id} (@{message.from_user.username})\n"
+        f"Валюта: {currency}\n"
+        f"Похоже, сумма в чеке: {amount_guess if amount_guess else 'не распознана'}\n"
+        f"Банк: {user['bank']}\nФИО: {user['fio']}\nТелефон: {user['phone']}"
+    )
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[[
+            InlineKeyboardButton(text="✏️ Указать сумму и подтвердить",
+                                  callback_data=f"a_review_{req_id}")
+        ]]
+    )
+    for admin_id in ADMIN_IDS:
+        try:
+            if message.photo:
+                await bot.send_photo(admin_id, message.photo[-1].file_id,
+                                      caption=caption, reply_markup=kb)
+            else:
+                await bot.send_message(admin_id, caption, reply_markup=kb)
+        except Exception as e:
+            log.warning("Не удалось уведомить админа %s: %s", admin_id, e)
+
+
+@user_router.callback_query(F.data.startswith("confirm_"))
+async def user_confirm_request(cb: CallbackQuery, bot: Bot):
+    req_id = int(cb.data.split("_", 1)[1])
+    req = await db.get_request(req_id)
+    if not req or req["status"] != "pending_review":
+        await cb.answer("Заявка уже неактуальна", show_alert=True)
         return
+    await db.set_request_status(req_id, "searching")
+    await cb.answer()
+    await safe_edit(cb, f"🔎 Ищем оператора для обмена #{req_id}\n⏱ Обычно это занимает ~3 мин")
 
-    state = user_states.get(user_id, {})
-
-    if state.get("awaiting_quantity"):
-        product_key = state["product_key"]
-        chat_id     = state.get("chat_id", user_id)
-        msg_id      = state.get("message_id")
-
-        if not text.isdigit() or int(text) <= 0:
-            bot.send_message(user_id, "❌ Введите целое положительное число!")
-            return
-
-        quantity = int(text)
-        product  = get_product(product_key)
-
-        if quantity < 5:
-            bot.send_message(user_id, "❌ Минимальное количество для покупки: 5 шт!")
-            return
-
-        if not product or quantity > product["stock"]:
-            bot.send_message(user_id, f"❌ В наличии только {product['stock']} шт!")
-            return
-
-        total_price = round(product["price"] * quantity, 2)
-        bal         = get_user_balance(user_id)
-
-        if bal < total_price:
-            line = "──────────────────"
-            err  = f"╭{line}╮\n"
-            err += f"│ ❌ Недостаточно средств\n"
-            err += f"├{line}┤\n"
-            err += f"│ 💳 Ваш баланс: {bal}$\n"
-            err += f"│ 💰 Нужно: {total_price}$\n"
-            err += f"│ ➕ Не хватает: {round(total_price - bal, 2)}$\n"
-            err += f"╰{line}╯"
-            kb = InlineKeyboardMarkup(row_width=2)
-            kb.row(
-                InlineKeyboardButton(" Пополнить", callback_data="balance",
-                                     icon_custom_emoji_id=EMOJI_BALANCE),
-                InlineKeyboardButton(" Каталог",   callback_data="catalog",
-                                     icon_custom_emoji_id=EMOJI_BACK),
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[[
+            InlineKeyboardButton(text="🙋 Взять заявку в работу",
+                                  callback_data=f"a_take_{req_id}")
+        ]]
+    )
+    for admin_id in ADMIN_IDS:
+        try:
+            await bot.send_message(
+                admin_id,
+                f"✔️ Пользователь подтвердил заявку #{req_id}, ищем оператора.",
+                reply_markup=kb,
             )
-            try:
-                if msg_id:
-                    bot.edit_message_text(err, chat_id=chat_id, message_id=msg_id,
-                                          reply_markup=kb, parse_mode="HTML")
-                else:
-                    bot.send_message(user_id, err, reply_markup=kb, parse_mode="HTML")
-            except:
-                bot.send_message(user_id, err, reply_markup=kb, parse_mode="HTML")
-            del user_states[user_id]
-            return
+        except Exception as e:
+            log.warning("Не удалось уведомить админа %s: %s", admin_id, e)
 
-        # Списываем деньги и делаем покупку
-        items = get_all_items(product_key)
-        if not items:
-            bot.send_message(user_id, "❌ Контент товара не настроен! Обратитесь в поддержку.")
-            del user_states[user_id]
-            return
-        if not deduct_balance(user_id, total_price):
-            bot.send_message(user_id, "❌ Ошибка списания!")
-            del user_states[user_id]
-            return
 
-        update_product_field(product_key, "stock", product["stock"] - quantity)
-        add_purchase(user_id, product_key, quantity, total_price)
+@user_router.callback_query(F.data.startswith("cancel_"))
+async def user_cancel_request(cb: CallbackQuery):
+    req_id = int(cb.data.split("_", 1)[1])
+    req = await db.get_request(req_id)
+    if not req:
+        await cb.answer()
+        return
+    await db.set_request_status(req_id, "cancelled")
+    await cb.answer("Заявка отменена")
+    await safe_edit(cb, f"❌ Заявка #{req_id} отменена.")
 
-        u = get_user(user_id)
-        referrer_id = u["referrer_id"] if u else None
-        if referrer_id:
-            bonus = round(total_price * 0.1, 2)
-            add_referral_earning(referrer_id, bonus)
-            try:
-                bot.send_message(int(referrer_id),
-                    f"🎁 Ваш реферал купил {product['name']} x{quantity}!\n💰 Начислено: +{bonus}$")
-            except:
-                pass
 
-        for aid in ADMIN_IDS:
-            if is_udv_mode_enabled(aid):
-                continue
-            try:
-                bot.send_message(aid,
-                    f"🛒 НОВАЯ ПОКУПКА!\n\n👤 ID{user_id} @{username}\n"
-                    f"📦 {product['emoji']} {product['name']} x{quantity}\n💰 Сумма: {total_price}$")
-            except:
-                pass
+@user_router.callback_query(F.data.startswith("rate_"))
+async def user_rate_request(cb: CallbackQuery):
+    _, req_id, stars = cb.data.split("_")
+    await db.set_rating(int(req_id), int(stars))
+    await cb.answer("Спасибо за оценку!")
+    await safe_edit(cb, f"⭐ Спасибо за оценку ({stars}/5)!")
 
-        last_purchase = db_exec(
-            "SELECT id FROM purchases WHERE user_id=? ORDER BY id DESC LIMIT 1",
-            (user_id,), fetchone=True
+# ============================== ADMIN ROUTER ================================
+
+admin_router = Router(name="admin")
+admin_router.message.filter(lambda m: is_admin(m.from_user.id))
+admin_router.callback_query.filter(lambda c: is_admin(c.from_user.id))
+
+
+@admin_router.message(Command("admin"))
+async def admin_panel(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("🛠 XYLT Admin", reply_markup=admin_main_kb())
+
+
+@admin_router.callback_query(F.data == "a_home")
+async def admin_home_cb(cb: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await cb.answer()
+    await safe_edit(cb, "🛠 XYLT Admin", admin_main_kb())
+
+
+@admin_router.callback_query(F.data == "a_stats")
+async def admin_stats(cb: CallbackQuery):
+    s = await db.stats()
+    text = (
+        "📊 Статистика XYLT\n\n"
+        f"👥 Пользователей: {s['users']}\n"
+        f"✅ Завершено обменов: {s['completed']}\n"
+        f"💰 Общий объём: {fmt(s['total_amount'])} (USDT/GRAM)\n"
+        f"💸 Выплачено: {fmt(s['total_rub'])} ₽\n"
+        f"⌛ В обработке: {s['pending']}"
+    )
+    await cb.answer()
+    await safe_edit(cb, text, admin_back_kb())
+
+
+@admin_router.callback_query(F.data == "a_requests")
+async def admin_requests(cb: CallbackQuery):
+    reqs = await db.pending_requests()
+    await cb.answer()
+    if not reqs:
+        await safe_edit(cb, "📋 Активных заявок нет.", admin_back_kb())
+        return
+    rows = []
+    for r in reqs:
+        label = f"#{r['id']} {r['currency']} [{r['status']}]"
+        rows.append([InlineKeyboardButton(text=label, callback_data=f"a_view_{r['id']}")])
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="a_home")])
+    await safe_edit(cb, "📋 Активные заявки:", InlineKeyboardMarkup(inline_keyboard=rows))
+
+
+@admin_router.callback_query(F.data.startswith("a_view_"))
+async def admin_view_request(cb: CallbackQuery):
+    req_id = int(cb.data.split("_", 2)[2])
+    r = await db.get_request(req_id)
+    await cb.answer()
+    if not r:
+        await safe_edit(cb, "Заявка не найдена.", admin_back_kb())
+        return
+    text = (
+        f"Заявка #{r['id']}\n"
+        f"Пользователь: {r['user_id']}\n"
+        f"Валюта: {r['currency']}\n"
+        f"Сумма: {r['amount']}\n"
+        f"Курс: {r['rate']}\n"
+        f"К выплате: {r['rub_amount']} ₽\n"
+        f"Банк: {r['bank']}\nФИО: {r['fio']}\nТелефон: {r['phone']}\n"
+        f"Статус: {r['status']}\n"
+        f"Оператор: {r['operator_username'] or '-'}"
+    )
+    rows = []
+    if r["status"] == "searching":
+        rows.append([InlineKeyboardButton(text="🙋 Взять в работу",
+                                           callback_data=f"a_take_{req_id}")])
+    if r["status"] == "in_progress":
+        rows.append([InlineKeyboardButton(text="✅ Завершить",
+                                           callback_data=f"a_complete_{req_id}")])
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="a_requests")])
+    await safe_edit(cb, text, InlineKeyboardMarkup(inline_keyboard=rows))
+
+
+@admin_router.callback_query(F.data.startswith("a_review_"))
+async def admin_review_request(cb: CallbackQuery, state: FSMContext):
+    req_id = int(cb.data.split("_", 2)[2])
+    await state.set_state(AdminReview.waiting_amount)
+    await state.update_data(req_id=req_id)
+    await cb.answer()
+    await cb.message.answer(
+        f"Введите фактическую сумму из чека для заявки #{req_id} (числом, например 250):"
+    )
+
+
+@admin_router.message(AdminReview.waiting_amount)
+async def admin_review_amount(message: Message, state: FSMContext, bot: Bot):
+    data = await state.get_data()
+    req_id = data["req_id"]
+    try:
+        amount = float(message.text.replace(",", "."))
+        if amount <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("⚠️ Введите положительное число.")
+        return
+
+    req = await db.get_request(req_id)
+    if not req:
+        await message.answer("Заявка не найдена.")
+        await state.clear()
+        return
+
+    rate = await compute_rate(req["currency"], amount)
+    rub_amount = round(amount * rate, 2)
+    await db.set_request_amount_rate(req_id, amount, rate, rub_amount)
+    await state.clear()
+    await message.answer(f"✅ Заявка #{req_id} обновлена и отправлена пользователю.")
+
+    user_text = (
+        "✔️ Чек принят!\n"
+        f"💵 Сумма в чеке: {amount} {req['currency']}\n"
+        f"📈 Курс: {rate} ₽/$\n"
+        f"💸 Получаете: {fmt(rub_amount)} ₽\n"
+        f"💳 Куда: {req['bank']}\n"
+        f"👤 ФИО: {req['fio']}\n\n"
+        "⚠️ После подтверждения заявка уходит в обработку."
+    )
+    try:
+        await bot.send_message(req["user_id"], user_text, reply_markup=confirm_kb(req_id))
+    except Exception as e:
+        log.warning("Не удалось отправить пользователю %s: %s", req["user_id"], e)
+
+
+@admin_router.callback_query(F.data.startswith("a_take_"))
+async def admin_take_request(cb: CallbackQuery, bot: Bot):
+    req_id = int(cb.data.split("_", 2)[2])
+    req = await db.get_request(req_id)
+    if not req or req["status"] != "searching":
+        await cb.answer("Заявка недоступна", show_alert=True)
+        return
+    await db.assign_operator(req_id, cb.from_user.id, cb.from_user.username)
+    await cb.answer("Вы взяли заявку в работу")
+    await safe_edit(cb, f"🙋 Вы оператор заявки #{req_id}.")
+
+    try:
+        await bot.send_message(
+            req["user_id"],
+            "✔️ Оператор найден!\n"
+            f"👤 Оператор: @{cb.from_user.username or 'оператор'}\n"
+            f"✍️ Заявка #{req_id}\n"
+            f"🤑 {req['amount']} {req['currency']} → {fmt(req['rub_amount'])} ₽\n"
+            "Сейчас подключится к вашей заявке.",
         )
-        new_purchase_id = last_purchase["id"] if last_purchase else 0
+    except Exception as e:
+        log.warning("Не удалось уведомить пользователя %s: %s", req["user_id"], e)
 
-        line = "──────────────────"
-        result  = f"╭{line}╮\n"
-        result += f'│ {product["emoji"]} {product["name"]}\n'
-        result += f"├{line}┤\n"
-        result += f"│\n"
-        result += f'│ <tg-emoji emoji-id="{EMOJI_DET_PRICE}">🎟</tg-emoji> Сумма: {total_price}$\n'
-        result += f'│ <tg-emoji emoji-id="{EMOJI_DET_DATE}">🎟</tg-emoji> Количество: {quantity} шт\n'
-        result += f"│\n"
-        result += f"├{line}┤\n"
-        result += f'│ <tg-emoji emoji-id="{EMOJI_DET_WAYS}">🎟</tg-emoji> СПОСОБЫ ПОЛУЧЕНИЯ:\n'
-        result += f"╰{line}╯"
 
-        kb = InlineKeyboardMarkup(row_width=3)
-        kb.row(
-            InlineKeyboardButton(" QR",    callback_data=f"get_qr_{new_purchase_id}",
-                                 icon_custom_emoji_id=EMOJI_DET_QR),
-            InlineKeyboardButton(" KOD",   callback_data=f"get_kod_{new_purchase_id}",
-                                 icon_custom_emoji_id=EMOJI_DET_KOD),
-            InlineKeyboardButton(" TOKEN", callback_data=f"get_token_{new_purchase_id}",
-                                 icon_custom_emoji_id=EMOJI_DET_TOKEN),
+@admin_router.callback_query(F.data.startswith("a_complete_"))
+async def admin_complete_request(cb: CallbackQuery, bot: Bot):
+    req_id = int(cb.data.split("_", 2)[2])
+    req = await db.get_request(req_id)
+    if not req or req["status"] != "in_progress":
+        await cb.answer("Заявка недоступна", show_alert=True)
+        return
+    await db.complete_request(req_id)
+    await db.add_turnover(req["user_id"], req["amount"], req["rub_amount"])
+    await cb.answer("Заявка завершена")
+    await safe_edit(cb, f"✅ Заявка #{req_id} завершена.")
+
+    try:
+        await bot.send_message(
+            req["user_id"],
+            f"🎉 Обмен #{req_id} завершён!\n"
+            f"💵 {req['amount']} {req['currency']} → {fmt(req['rub_amount'])} ₽\n"
+            f"💳 {req['bank']}\n"
+            f"👤 Оператор: @{req['operator_username'] or 'оператор'}\n\n"
+            "⭐️ Оцените работу сервиса:",
+            reply_markup=rating_kb(req_id),
         )
-        kb.row(InlineKeyboardButton(
-            " Назад", callback_data="back_to_menu",
-            icon_custom_emoji_id=EMOJI_BACK
-        ))
+    except Exception as e:
+        log.warning("Не удалось уведомить пользователя %s: %s", req["user_id"], e)
 
-        del user_states[user_id]
-        if msg_id:
-            try:
-                bot.edit_message_text(result, chat_id=chat_id, message_id=msg_id,
-                                      reply_markup=kb, parse_mode="HTML")
-            except:
-                try:
-                    bot.edit_message_caption(result, chat_id=chat_id, message_id=msg_id,
-                                             reply_markup=kb, parse_mode="HTML")
-                except:
-                    bot.send_message(user_id, result, reply_markup=kb, parse_mode="HTML")
-        else:
-            bot.send_message(user_id, result, reply_markup=kb, parse_mode="HTML")
+
+# ---- Курсы ----
+
+@admin_router.callback_query(F.data == "a_rates")
+async def admin_rates(cb: CallbackQuery):
+    r = await db.get_rates()
+    text = (
+        "💱 Текущие курсы:\n"
+        f"до 150$: {r['usdt_tier1']}\n"
+        f"150-300$: {r['usdt_tier2']}\n"
+        f"300$+: {r['usdt_tier3']}\n"
+        f"GRAM: {r['gram_rate']}\n"
+        f"мин. USDT: {r['min_usdt']}\n"
+        f"мин. GRAM: {r['min_gram']}"
+    )
+    rows = [
+        [InlineKeyboardButton(text="✏️ до 150$", callback_data="editrate_usdt_tier1")],
+        [InlineKeyboardButton(text="✏️ 150-300$", callback_data="editrate_usdt_tier2")],
+        [InlineKeyboardButton(text="✏️ 300$+", callback_data="editrate_usdt_tier3")],
+        [InlineKeyboardButton(text="✏️ GRAM", callback_data="editrate_gram_rate")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="a_home")],
+    ]
+    await cb.answer()
+    await safe_edit(cb, text, InlineKeyboardMarkup(inline_keyboard=rows))
+
+
+@admin_router.callback_query(F.data.startswith("editrate_"))
+async def admin_edit_rate(cb: CallbackQuery, state: FSMContext):
+    field = cb.data.split("_", 1)[1]
+    await state.set_state(AdminRates.waiting_value)
+    await state.update_data(field=field)
+    await cb.answer()
+    await cb.message.answer(f"Введите новое значение для {field}:")
+
+
+@admin_router.message(AdminRates.waiting_value)
+async def admin_edit_rate_value(message: Message, state: FSMContext):
+    data = await state.get_data()
+    field = data["field"]
+    try:
+        value = float(message.text.replace(",", "."))
+    except ValueError:
+        await message.answer("⚠️ Введите число.")
         return
+    await db.set_rate_field(field, value)
+    await state.clear()
+    await message.answer(f"✅ {field} обновлено на {value}", reply_markup=admin_main_kb())
 
-    if state.get("awaiting_custom_deposit"):
+
+# ---- Ночной буст ----
+
+@admin_router.callback_query(F.data == "a_boost")
+async def admin_boost(cb: CallbackQuery):
+    s = await db.get_settings()
+    status = "включён ✅" if s["night_boost_enabled"] else "выключен ❌"
+    text = (
+        f"🔔 Ночной буст: {status}\n"
+        f"Время: {s['night_boost_start']}–{s['night_boost_end']} МСК\n"
+        f"Бонус: +{s['night_boost_bonus']} ₽"
+    )
+    toggle_text = "❌ Выключить" if s["night_boost_enabled"] else "✅ Включить"
+    rows = [
+        [InlineKeyboardButton(text=toggle_text, callback_data="boost_toggle")],
+        [InlineKeyboardButton(text="✏️ Изменить время", callback_data="boost_time")],
+        [InlineKeyboardButton(text="✏️ Изменить бонус", callback_data="boost_bonus")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="a_home")],
+    ]
+    await cb.answer()
+    await safe_edit(cb, text, InlineKeyboardMarkup(inline_keyboard=rows))
+
+
+@admin_router.callback_query(F.data == "boost_toggle")
+async def admin_boost_toggle(cb: CallbackQuery):
+    s = await db.get_settings()
+    await db.set_setting_field("night_boost_enabled", 0 if s["night_boost_enabled"] else 1)
+    await cb.answer("Изменено")
+    await admin_boost(cb)
+
+
+@admin_router.callback_query(F.data == "boost_time")
+async def admin_boost_time(cb: CallbackQuery, state: FSMContext):
+    await state.set_state(AdminBoost.waiting_time)
+    await cb.answer()
+    await cb.message.answer("Введите время в формате ЧЧ:ММ-ЧЧ:ММ (например 01:00-09:00):")
+
+
+@admin_router.message(AdminBoost.waiting_time)
+async def admin_boost_time_value(message: Message, state: FSMContext):
+    m = re.match(r"^(\d{1,2}:\d{2})-(\d{1,2}:\d{2})$", message.text.strip())
+    if not m:
+        await message.answer("⚠️ Формат: 01:00-09:00")
+        return
+    await db.set_setting_field("night_boost_start", m.group(1))
+    await db.set_setting_field("night_boost_end", m.group(2))
+    await state.clear()
+    await message.answer("✅ Время буста обновлено.", reply_markup=admin_main_kb())
+
+
+@admin_router.callback_query(F.data == "boost_bonus")
+async def admin_boost_bonus(cb: CallbackQuery, state: FSMContext):
+    await state.set_state(AdminBoost.waiting_bonus)
+    await cb.answer()
+    await cb.message.answer("Введите бонус в рублях (например 0.75):")
+
+
+@admin_router.message(AdminBoost.waiting_bonus)
+async def admin_boost_bonus_value(message: Message, state: FSMContext):
+    try:
+        value = float(message.text.replace(",", "."))
+    except ValueError:
+        await message.answer("⚠️ Введите число.")
+        return
+    await db.set_setting_field("night_boost_bonus", value)
+    await state.clear()
+    await message.answer("✅ Бонус буста обновлён.", reply_markup=admin_main_kb())
+
+
+# ---- Юзеры ----
+
+@admin_router.callback_query(F.data == "a_users")
+async def admin_users(cb: CallbackQuery, state: FSMContext):
+    await state.set_state(AdminUsers.waiting_id)
+    await cb.answer()
+    await cb.message.answer("Введите user_id для просмотра профиля:")
+
+
+@admin_router.message(AdminUsers.waiting_id)
+async def admin_users_lookup(message: Message, state: FSMContext):
+    try:
+        user_id = int(message.text.strip())
+    except ValueError:
+        await message.answer("⚠️ Введите числовой ID.")
+        return
+    u = await db.get_user(user_id)
+    await state.clear()
+    if not u:
+        await message.answer("Пользователь не найден.", reply_markup=admin_main_kb())
+        return
+    text = (
+        f"👤 ID: {u['user_id']} (@{u['username']})\n"
+        f"С нами с: {u['joined_at']}\n"
+        f"Телефон: {u['phone']}\nФИО: {u['fio']}\nБанк: {u['bank']}\n"
+        f"Оборот: {fmt(u['turnover'])}\nВыплачено: {fmt(u['total_rub'])} ₽\n"
+        f"Заблокирован: {'да' if u['is_blocked'] else 'нет'}"
+    )
+    await message.answer(text, reply_markup=admin_main_kb())
+
+
+# ---- Блокировки ----
+
+@admin_router.callback_query(F.data == "a_blocks")
+async def admin_blocks(cb: CallbackQuery):
+    rows = [
+        [InlineKeyboardButton(text="🚫 Заблокировать по ID", callback_data="block_user")],
+        [InlineKeyboardButton(text="✅ Разблокировать по ID", callback_data="unblock_user")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="a_home")],
+    ]
+    await cb.answer()
+    await safe_edit(cb, "🚫 Блокировки пользователей", InlineKeyboardMarkup(inline_keyboard=rows))
+
+
+@admin_router.callback_query(F.data == "block_user")
+async def admin_block_user_start(cb: CallbackQuery, state: FSMContext):
+    await state.set_state(AdminUsers.waiting_block_id)
+    await cb.answer()
+    await cb.message.answer("Введите user_id для блокировки:")
+
+
+@admin_router.message(AdminUsers.waiting_block_id)
+async def admin_block_user_value(message: Message, state: FSMContext):
+    try:
+        user_id = int(message.text.strip())
+    except ValueError:
+        await message.answer("⚠️ Введите числовой ID.")
+        return
+    await db.update_user_field(user_id, "is_blocked", 1)
+    await state.clear()
+    await message.answer(f"🚫 Пользователь {user_id} заблокирован.", reply_markup=admin_main_kb())
+
+
+@admin_router.callback_query(F.data == "unblock_user")
+async def admin_unblock_user_start(cb: CallbackQuery, state: FSMContext):
+    await state.set_state(AdminUsers.waiting_unblock_id)
+    await cb.answer()
+    await cb.message.answer("Введите user_id для разблокировки:")
+
+
+@admin_router.message(AdminUsers.waiting_unblock_id)
+async def admin_unblock_user_value(message: Message, state: FSMContext):
+    try:
+        user_id = int(message.text.strip())
+    except ValueError:
+        await message.answer("⚠️ Введите числовой ID.")
+        return
+    await db.update_user_field(user_id, "is_blocked", 0)
+    await state.clear()
+    await message.answer(f"✅ Пользователь {user_id} разблокирован.", reply_markup=admin_main_kb())
+
+
+# ---- Поддержка (тикеты) ----
+
+@admin_router.callback_query(F.data == "a_support")
+async def admin_support(cb: CallbackQuery):
+    tickets = await db.open_tickets()
+    await cb.answer()
+    if not tickets:
+        await safe_edit(cb, "💬 Открытых обращений нет.", admin_back_kb())
+        return
+    lines = [f"#{t['id']} от {t['user_id']}: {t['message'][:60]}" for t in tickets[:20]]
+    await safe_edit(cb, "💬 Открытые обращения:\n\n" + "\n".join(lines), admin_back_kb())
+
+
+# ---- Рассылка ----
+
+@admin_router.callback_query(F.data == "a_broadcast")
+async def admin_broadcast_start(cb: CallbackQuery, state: FSMContext):
+    await state.set_state(AdminBroadcastForm.waiting_text)
+    await cb.answer()
+    await cb.message.answer("📢 Введите текст рассылки для всех пользователей:")
+
+
+@admin_router.message(AdminBroadcastForm.waiting_text)
+async def admin_broadcast_send(message: Message, state: FSMContext, bot: Bot):
+    text = message.text
+    await state.clear()
+    ids = await db.all_user_ids()
+    sent = 0
+    for uid in ids:
         try:
-            amount = float(text.replace(",", "."))
-            if not (1 <= amount <= 5000):
-                bot.send_message(user_id, "❌ Сумма должна быть от 1$ до 5000$")
-                return
-            del user_states[user_id]
-            process_payment(message.chat.id, user_id, amount, None)
-        except ValueError:
-            bot.send_message(user_id, "❌ Введите числовую сумму (например: 15.50)")
+            await bot.send_message(uid, text)
+            sent += 1
+            await asyncio.sleep(0.05)  # избегаем flood-limit
+        except Exception:
+            continue
+    async with db._lock:
+        await db._conn.execute(
+            "INSERT INTO broadcasts (text, sent_at, sent_count) VALUES (?, ?, ?)",
+            (text, datetime.now(MSK).isoformat(), sent),
+        )
+        await db._conn.commit()
+    await message.answer(f"✅ Рассылка отправлена {sent} пользователям.", reply_markup=admin_main_kb())
+
+
+# ---- Настройки ----
+
+@admin_router.callback_query(F.data == "a_settings")
+async def admin_settings(cb: CallbackQuery):
+    r = await db.get_rates()
+    rows = [
+        [InlineKeyboardButton(text="✏️ Мин. USDT", callback_data="set_min_usdt")],
+        [InlineKeyboardButton(text="✏️ Мин. GRAM", callback_data="set_min_gram")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="a_home")],
+    ]
+    await cb.answer()
+    await safe_edit(
+        cb,
+        f"⚙️ Настройки\nМин. USDT: {r['min_usdt']}\nМин. GRAM: {r['min_gram']}",
+        InlineKeyboardMarkup(inline_keyboard=rows),
+    )
+
+
+@admin_router.callback_query(F.data == "set_min_usdt")
+async def set_min_usdt_start(cb: CallbackQuery, state: FSMContext):
+    await state.set_state(AdminSettings.waiting_min_usdt)
+    await cb.answer()
+    await cb.message.answer("Введите новую минималку USDT:")
+
+
+@admin_router.message(AdminSettings.waiting_min_usdt)
+async def set_min_usdt_value(message: Message, state: FSMContext):
+    try:
+        value = float(message.text.replace(",", "."))
+    except ValueError:
+        await message.answer("⚠️ Введите число.")
         return
+    await db.set_rate_field("min_usdt", value)
+    await state.clear()
+    await message.answer("✅ Обновлено.", reply_markup=admin_main_kb())
 
-    if state.get("awaiting_items"):
-        product_key = state["awaiting_items"]
-        s_chat_id   = state.get("chat_id", user_id)
-        s_msg_id    = state.get("message_id")
 
-        lines = [line.strip() for line in text.splitlines() if line.strip()]
-        if not lines:
-            bot.send_message(user_id, "❌ Пустой список! Отправьте хотя бы одну строку.")
-            return
+@admin_router.callback_query(F.data == "set_min_gram")
+async def set_min_gram_start(cb: CallbackQuery, state: FSMContext):
+    await state.set_state(AdminSettings.waiting_min_gram)
+    await cb.answer()
+    await cb.message.answer("Введите новую минималку GRAM:")
 
-        add_product_items(product_key, lines)
-        p = get_product(product_key)
-        stats = get_items_stats(product_key)
-        bot.send_message(user_id,
-            f"✅ Добавлено {len(lines)} ед. контента!\n"
-            f"📦 Свободно сейчас: {stats['free']} шт")
-        del user_states[user_id]
-        try:
-            bot.edit_message_text(
-                product_info_text(product_key, p),
-                chat_id=s_chat_id, message_id=s_msg_id,
-                reply_markup=product_manage_keyboard(product_key)
-            )
-        except:
-            pass
+
+@admin_router.message(AdminSettings.waiting_min_gram)
+async def set_min_gram_value(message: Message, state: FSMContext):
+    try:
+        value = float(message.text.replace(",", "."))
+    except ValueError:
+        await message.answer("⚠️ Введите число.")
         return
-
-    if state.get("prod_setstock"):
-        product_key = state["prod_setstock"]
-        s_chat_id   = state.get("chat_id", user_id)
-        s_msg_id    = state.get("message_id")
-        try:
-            if text.startswith("+"):
-                delta = int(text[1:])
-                if delta < 0: raise ValueError
-                p = get_product(product_key)
-                new_stock = p["stock"] + delta
-                action = f"+{delta} шт → стало {new_stock} шт"
-            else:
-                new_stock = int(text)
-                if new_stock < 0: raise ValueError
-                action = f"установлено {new_stock} шт"
-        except ValueError:
-            bot.send_message(user_id,
-                "❌ Введите целое число (например: <code>100</code> или <code>+50</code>)",
-                parse_mode="HTML")
-            return
-        update_product_field(product_key, "stock", new_stock)
-        p = get_product(product_key)
-        bot.send_message(user_id, f"✅ Остаток обновлён: {action}")
-        del user_states[user_id]
-        try:
-            bot.edit_message_text(product_info_text(product_key, p),
-                chat_id=s_chat_id, message_id=s_msg_id,
-                reply_markup=product_manage_keyboard(product_key))
-        except: pass
-        return
-
-    if state.get("prod_setprice"):
-        product_key = state["prod_setprice"]
-        s_chat_id   = state.get("chat_id", user_id)
-        s_msg_id    = state.get("message_id")
-        try:
-            new_price = round(float(text.replace(",", ".")), 2)
-            if new_price <= 0: raise ValueError
-        except ValueError:
-            bot.send_message(user_id, "❌ Введите корректную цену (например: 3.50)")
-            return
-        update_product_field(product_key, "price", new_price)
-        p = get_product(product_key)
-        bot.send_message(user_id, f"✅ Цена обновлена: {p['price']}$")
-        del user_states[user_id]
-        try:
-            bot.edit_message_text(product_info_text(product_key, p),
-                chat_id=s_chat_id, message_id=s_msg_id,
-                reply_markup=product_manage_keyboard(product_key))
-        except: pass
-        return
-
-    if state.get("prod_setname"):
-        product_key = state["prod_setname"]
-        s_chat_id   = state.get("chat_id", user_id)
-        s_msg_id    = state.get("message_id")
-        if not text:
-            bot.send_message(user_id, "❌ Введите название!")
-            return
-        update_product_field(product_key, "name", text)
-        p = get_product(product_key)
-        bot.send_message(user_id, f"✅ Название обновлено: '{text}'")
-        del user_states[user_id]
-        try:
-            bot.edit_message_text(product_info_text(product_key, p),
-                chat_id=s_chat_id, message_id=s_msg_id,
-                reply_markup=product_manage_keyboard(product_key))
-        except: pass
-        return
-
-    if state.get("prod_setdesc"):
-        product_key = state["prod_setdesc"]
-        s_chat_id   = state.get("chat_id", user_id)
-        s_msg_id    = state.get("message_id")
-        update_product_field(product_key, "description", text)
-        p = get_product(product_key)
-        bot.send_message(user_id, "✅ Описание обновлено!")
-        del user_states[user_id]
-        try:
-            bot.edit_message_text(product_info_text(product_key, p),
-                chat_id=s_chat_id, message_id=s_msg_id,
-                reply_markup=product_manage_keyboard(product_key))
-        except: pass
-        return
-
-    if state.get("prod_setemoji"):
-        product_key = state["prod_setemoji"]
-        s_chat_id   = state.get("chat_id", user_id)
-        s_msg_id    = state.get("message_id")
-        update_product_field(product_key, "emoji", text)
-        p = get_product(product_key)
-        bot.send_message(user_id, f"✅ Эмодзи обновлён: {text}")
-        del user_states[user_id]
-        try:
-            bot.edit_message_text(product_info_text(product_key, p),
-                chat_id=s_chat_id, message_id=s_msg_id,
-                reply_markup=product_manage_keyboard(product_key))
-        except: pass
-        return
-
-    if state.get("awaiting_add_product"):
-        try:
-            parts = [d.strip() for d in text.split("|")]
-            if len(parts) < 5:
-                raise ValueError("Нужно 5 полей")
-            pk   = parts[0].lower().replace(" ", "_")
-            name, price, emoji, desc = parts[1], float(parts[2]), parts[3], parts[4]
-            upsert_product(pk, name, emoji, price, 0, desc)
-            bot.send_message(user_id,
-                f"✅ Товар '{name}' добавлен!\n\n{emoji} {name} | {price}$\n\n"
-                f"Теперь добавьте контент через «📦 Добавить контент» в меню товаров.")
-        except Exception as e:
-            bot.send_message(user_id,
-                f"❌ Ошибка: {e}\n\nФормат: id|название|цена|эмодзи|описание")
-        del user_states[user_id]
-        send_main_menu(message)
-        return
-
-    if "awaiting_edit_product" in state:
-        product_key = state["awaiting_edit_product"]
-        s_chat_id   = state.get("chat_id", user_id)
-        s_msg_id    = state.get("message_id")
-        try:
-            parts = [d.strip() for d in text.split("|")]
-            if len(parts) < 4:
-                raise ValueError("Нужно 4 поля")
-            name, price, emoji, desc = parts[0], float(parts[1]), parts[2], parts[3]
-            if get_product(product_key):
-                # Сохраняем текущий stock (количество свободных items)
-                stats = get_items_stats(product_key)
-                upsert_product(product_key, name, emoji, price, stats["free"], desc)
-                p = get_product(product_key)
-                bot.send_message(user_id, "✅ Товар полностью обновлён!")
-                try:
-                    bot.edit_message_text(
-                        product_info_text(product_key, p),
-                        chat_id=s_chat_id, message_id=s_msg_id,
-                        reply_markup=product_manage_keyboard(product_key))
-                except: pass
-            else:
-                bot.send_message(user_id, "❌ Товар не найден!")
-        except Exception as e:
-            bot.send_message(user_id,
-                f"❌ Ошибка: {e}\n\nФормат: название|цена|эмодзи|описание")
-        del user_states[user_id]
-        return
-
-    if state.get("awaiting_find_user"):
-        search = text.replace("@", "")
-        if search.isdigit():
-            found = get_user(int(search))
-        else:
-            rows  = db_exec("SELECT * FROM users WHERE username=? COLLATE NOCASE",
-                            (search,), fetchall=True)
-            found = rows[0] if rows else None
-
-        if found:
-            refs   = get_referrals(found["user_id"])
-            status = "🚫 Заблокирован" if found["is_banned"] else ("✅ Одобрен" if found["is_approved"] else "⏳ Ожидает")
-            result = (f"👤 ПОЛЬЗОВАТЕЛЬ НАЙДЕН\n\n"
-                      f"ID: {found['user_id']}\n"
-                      f"Username: @{found['username'] or 'нет'}\n"
-                      f"💰 Баланс: {round(found['balance'],2)}$\n"
-                      f"📦 Куплено: {found['total_bought']} акков\n"
-                      f"👥 Рефералов: {len(refs)}\n"
-                      f"💰 Реф. заработок: {found['referral_earnings']}$\n"
-                      f"🔑 Статус: {status}\n"
-                      f"📅 Зарегистрирован: {found['registered_at']}")
-        else:
-            result = f"❌ Пользователь '{text}' не найден!"
-
-        bot.send_message(user_id, result)
-        del user_states[user_id]
-        send_main_menu(message)
-        return
-
-    if state.get("awaiting_manual_deposit"):
-        try:
-            parts     = text.split("|")
-            target_id = int(parts[0].strip())
-            amount    = float(parts[1].strip())
-            add_balance(target_id, amount)
-            bot.send_message(user_id, f"✅ Зачислено {amount}$ пользователю ID:{target_id}")
-            try:
-                bot.send_message(target_id,
-                    f"💰 Вам зачислено {amount}$!\n"
-                    f"Текущий баланс: {get_user_balance(target_id)}$",
-                    parse_mode="HTML")
-            except: pass
-        except Exception as e:
-            bot.send_message(user_id, f"❌ Ошибка: {e}\n\nФормат: ID|сумма")
-        del user_states[user_id]
-        send_main_menu(message)
-        return
-
-    if state.get("awaiting_mailing"):
-        users   = get_all_users()
-        ok = fail = 0
-        bot.send_message(user_id, "📢 Рассылка начата...")
-        for u in users:
-            try:
-                bot.send_message(u["user_id"], f"📢 РАССЫЛКА\n\n{text}", parse_mode="HTML")
-                ok += 1
-                time.sleep(0.05)
-            except:
-                fail += 1
-        bot.send_message(user_id,
-            f"✅ Рассылка завершена!\n📨 Доставлено: {ok}\n❌ Ошибок: {fail}")
-        del user_states[user_id]
-        send_main_menu(message)
-        return
-
-    if state.get("awaiting_ban"):
-        try:
-            target_id = int(text)
-            target    = get_user(target_id)
-            if target:
-                new_status = not bool(target["is_banned"])
-                set_banned(target_id, new_status)
-                action = "заблокирован" if new_status else "разблокирован"
-                bot.send_message(user_id, f"✅ Пользователь ID:{target_id} {action}!")
-            else:
-                bot.send_message(user_id, "❌ Пользователь не найден!")
-        except:
-            bot.send_message(user_id, "❌ Введите корректный ID!")
-        del user_states[user_id]
-        send_main_menu(message)
-        return
-
-    send_main_menu(message)
-
-def process_payment(chat_id: int, user_id: int, amount: float, edit_msg_id=None):
-    invoice_id, invoice_url = create_invoice(amount, user_id)
-    if not invoice_url:
-        bot.send_message(user_id, "❌ Ошибка создания платежа. Попробуйте позже.")
-        return
-
-    text = (f'<b><tg-emoji emoji-id="5879814368572478751">🎟</tg-emoji> Пополнение.\n\n'
-            f'<tg-emoji emoji-id="5199527184229751349">🎟</tg-emoji>Сумма: {amount}$\n<tg-emoji emoji-id="5454060067315801997">🎟</tg-emoji>Валюта: USDT\n\n'
-            f"Нажмите «Оплатить» и завершите оплату в CryptoBot.\n"
-            f"Баланс пополнится автоматически в течение нескольких секунд.</b>")
-    kb = payment_keyboard(invoice_url)
-
-    if edit_msg_id:
-        # Пробуем обновить существующее сообщение (caption для фото, text для обычных)
-        updated = False
-        try:
-            bot.edit_message_caption(
-                caption=text, chat_id=chat_id, message_id=edit_msg_id,
-                reply_markup=kb, parse_mode="HTML")
-            msg_id = edit_msg_id
-            updated = True
-        except:
-            pass
-        if not updated:
-            try:
-                bot.edit_message_text(text, chat_id=chat_id,
-                                      message_id=edit_msg_id, reply_markup=kb,
-                                      parse_mode="HTML")
-                msg_id = edit_msg_id
-                updated = True
-            except:
-                pass
-        if not updated:
-            photo_id = get_setting("menu_photo_file_id")
-            if photo_id:
-                sent = bot.send_photo(chat_id, photo_id, caption=text,
-                                      reply_markup=kb, parse_mode="HTML")
-            else:
-                sent = bot.send_message(chat_id, text, reply_markup=kb, parse_mode="HTML")
-            msg_id = sent.message_id
-    else:
-        photo_id = get_setting("menu_photo_file_id")
-        if photo_id:
-            sent = bot.send_photo(chat_id, photo_id, caption=text,
-                                  reply_markup=kb, parse_mode="HTML")
-        else:
-            sent = bot.send_message(chat_id, text, reply_markup=kb, parse_mode="HTML")
-        msg_id = sent.message_id
-
-    if invoice_id:
-        active_invoices[invoice_id] = {
-            "user_id":    user_id,
-            "amount":     amount,
-            "chat_id":    chat_id,
-            "message_id": msg_id
-        }
+    await db.set_rate_field("min_gram", value)
+    await state.clear()
+    await message.answer("✅ Обновлено.", reply_markup=admin_main_kb())
 
 
-# ─── Flask webhook server ────────────────────────────────────────────────────
-app = Flask(__name__)
+# ============================== SUPPORT (пользователь -> тикет) ============
+# Если хотите принимать сообщения поддержки внутри бота (а не только через
+# ЛС @xylt_admin), можно включить эту ветку — она сохранит любое сообщение
+# от пользователя вне известных состояний как тикет поддержки.
 
-WEBHOOK_HOST = os.environ.get("WEBHOOK_URL", "").rstrip("/")
-WEBHOOK_PATH = f"/webhook/{BOT_TOKEN}"
-WEBHOOK_URL  = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
-PORT         = int(os.environ.get("PORT", 10000))
+@user_router.message(F.text & ~F.text.startswith("/"))
+async def fallback_message(message: Message, state: FSMContext):
+    current = await state.get_state()
+    if current is not None:
+        return  # уже обрабатывается другим хэндлером/состоянием
+    await message.answer(
+        "Не понимаю команду. Используйте меню ниже 👇",
+        reply_markup=main_menu_kb(),
+    )
 
-@app.route("/")
-def health():
-    return "OK", 200
 
-@app.route(WEBHOOK_PATH, methods=["POST"])
-def webhook():
-    if request.headers.get("content-type") == "application/json":
-        json_string = request.get_data().decode("utf-8")
-        update = telebot.types.Update.de_json(json_string)
-        bot.process_new_updates([update])
-        return "", 200
-    abort(403)
+# ============================== ENTRYPOINT ==================================
+
+async def main():
+    await db.connect()
+
+    bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    dp = Dispatcher(storage=MemoryStorage())
+    dp.include_router(admin_router)
+    dp.include_router(user_router)
+
+    log.info("Бот запускается...")
+    try:
+        await dp.start_polling(bot)
+    finally:
+        await db.close()
+        await bot.session.close()
+
 
 if __name__ == "__main__":
-    _open_connection()
-    init_db()
-
-    watcher = threading.Thread(target=payment_watcher, daemon=True)
-    watcher.start()
-
-    # Устанавливаем вебхук
-    bot.remove_webhook()
-    time.sleep(0.5)
-    if WEBHOOK_HOST:
-        bot.set_webhook(url=WEBHOOK_URL)
-        print("=" * 50)
-        print(f"BOT STARTED (WEBHOOK MODE) | DB: {DB_FILE}")
-        print("=" * 50)
-        print(f"Token: {BOT_TOKEN[:10]}...")
-        print(f"Admins: {ADMIN_IDS}")
-        print(f"Webhook: {WEBHOOK_URL}")
-        print(f"Port: {PORT}")
-        print("=" * 50)
-        app.run(host="0.0.0.0", port=PORT)
-    else:
-        print("WEBHOOK_URL not set! Set it in Render environment variables.")
-        raise SystemExit(1)
+    asyncio.run(main())
