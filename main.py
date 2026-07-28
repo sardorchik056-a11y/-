@@ -598,13 +598,13 @@ def rates_edit_kb() -> InlineKeyboardMarkup:
 
 def admin_rates_text(r) -> str:
     return (
-        "💱 Текущие курсы:\n"
-        f"до 150$: {r['usdt_tier1']}\n"
-        f"150-300$: {r['usdt_tier2']}\n"
-        f"300$+: {r['usdt_tier3']}\n"
-        f"GRAM: {r['gram_rate']}\n"
-        f"мин. USDT: {r['min_usdt']}\n"
-        f"мин. GRAM: {r['min_gram']}"
+        "💱 <b>Текущие курсы</b>\n"
+        f"до 150$: <b>{r['usdt_tier1']}</b>\n"
+        f"150-300$: <b>{r['usdt_tier2']}</b>\n"
+        f"300$+: <b>{r['usdt_tier3']}</b>\n"
+        f"GRAM: <b>{r['gram_rate']}</b>\n\n"
+        f"<i>мин. USDT (архив.): {r['min_usdt']}</i>\n"
+        f"<i>мин. GRAM (архив.): {r['min_gram']}</i>"
     )
 
 
@@ -621,12 +621,12 @@ async def show_profile_text(user_id: int, username: str | None) -> str:
     await db.ensure_user(user_id, username)
     u = await db.get_user(user_id)
     return (
-        "👤Ваш профиль\n"
-        f"👤ID: {u['user_id']}\n"
-        f"📅С нами с: {u['joined_at']}\n"
-        "📊Статистика:\n"
-        f"• Оборот: {fmt(u['turnover'])} USDT\n"
-        f"• Сумма обменов: {fmt(u['total_rub'])} ₽"
+        "👤 <b>Ваш профиль</b>\n\n"
+        f"🆔 ID: <b>{u['user_id']}</b>\n"
+        f"📅 <i>С нами с: {u['joined_at']}</i>\n\n"
+        "📊 <b>Статистика</b>\n"
+        f"• Оборот: <b>{fmt(u['turnover'])}</b> USDT\n"
+        f"• Сумма обменов: <b>{fmt(u['total_rub'])}</b> ₽"
     )
 
 
@@ -651,9 +651,9 @@ async def rates_text() -> str:
     boost_line = ""
     if settings["night_boost_enabled"]:
         boost_line = (
-            f"🔥 Ночной буст: {settings['night_boost_start']}–{settings['night_boost_end']} МСК "
-            f"+ {settings['night_boost_bonus']}₽ к курсу"
-            + (" (сейчас активен)" if boosted else "")
+            f"🔥 <b>Ночной буст:</b> {settings['night_boost_start']}–{settings['night_boost_end']} МСК "
+            f"<b>+{settings['night_boost_bonus']}₽</b> к курсу"
+            + (" <i>(сейчас активен)</i>" if boosted else "")
         )
 
     t1, t2, t3 = rates["usdt_tier1"], rates["usdt_tier2"], rates["usdt_tier3"]
@@ -664,13 +664,13 @@ async def rates_text() -> str:
         gram = rates["gram_rate"]
 
     text = (
-        "💱 Актуальные курсы XYLT\n\n"
-        "💎 USDT/GRAM → RUB\n"
-        f"• до 150$: {t1:.2f} ₽/$\n"
-        f"• 150–300$: {t2:.2f} ₽/$\n"
-        f"• 300$+: {t3:.2f} ₽/$\n"
-        f"• GRAM: {gram:.2f} ₽\n\n"
-        f"⌛ В обработке: {pending} заявок\n"
+        "💱 <b>Актуальные курсы XYLT</b>\n\n"
+        "💎 <b>USDT/GRAM → RUB</b>\n"
+        f"• до 150$: <b>{t1:.2f} ₽/$</b>\n"
+        f"• 150–300$: <b>{t2:.2f} ₽/$</b>\n"
+        f"• 300$+: <b>{t3:.2f} ₽/$</b>\n"
+        f"• GRAM: <b>{gram:.2f} ₽</b>\n\n"
+        f"⌛ <i>В обработке: {pending} заявок</i>\n"
     )
     if boost_line:
         text += boost_line + "\n"
@@ -678,10 +678,10 @@ async def rates_text() -> str:
     min_gram_live = calc_min_for_rate(gram)
 
     text += (
-        "\n💰 Минималка:\n"
-        f"• USDT: {min_usdt_live} USDT (≈1100₽)\n"
-        f"• GRAM: {min_gram_live} GRAM (≈1100₽)\n\n"
-        "🔜 Работаем 24/7"
+        "\n💰 <b>Минималка</b>\n"
+        f"• USDT: <b>{min_usdt_live}</b> USDT <i>(≈1100₽)</i>\n"
+        f"• GRAM: <b>{min_gram_live}</b> GRAM <i>(≈1100₽)</i>\n\n"
+        "🔜 <i>Работаем 24/7</i>"
     )
     return text
 
@@ -856,10 +856,10 @@ async def go_send(cb: CallbackQuery, state: FSMContext, bot: Bot):
     await state.set_state(ExchangeFlow.waiting_receipt)
     await cb.answer()
     text = (
-        f"💸 Отправьте {currency} и пришлите сюда чек из CryptoBot\n\n"
-        f"💵 Минимальная сумма: {min_amount} {currency}\n\n"
-        "После оплаты пришлите чек (переслать сообщение с чеком, скриншот "
-        "или укажите сумму текстом)."
+        f"💸 Отправьте <b>{currency}</b> и пришлите сюда чек из CryptoBot\n\n"
+        f"💵 Минимальная сумма: <b>{min_amount} {currency}</b> <i>(≈1100₽)</i>\n\n"
+        "<i>После оплаты пришлите чек — перешлите сообщение с чеком, "
+        "скриншот или укажите сумму текстом.</i>"
     )
     await render(bot, cb.message.chat.id, cb.from_user.id, text, cancel_kb("fill_form"))
 
