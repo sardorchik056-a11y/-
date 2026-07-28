@@ -17,6 +17,7 @@ aiogram 3.x + SQLite (aiosqlite)
 
 import asyncio
 import logging
+import math
 import re
 from datetime import datetime, timedelta, timezone
 
@@ -666,11 +667,14 @@ async def rates_text() -> str:
     )
     if boost_line:
         text += boost_line + "\n"
+    min_gram_rub = rates["min_gram"] * gram
+    min_gram_rub_rounded = math.ceil(min_gram_rub / 1100) * 1100 if min_gram_rub > 0 else 0
+
     text += (
         "\n💰 Минималка:\n"
         f"• USDT: {rates['min_usdt']} USDT\n"
         f"• GRAM: {rates['min_gram']} GRAM "
-        "( бот сам высчитывает сумму кратное 1100₽ )\n\n"
+        f"(≈{min_gram_rub_rounded}₽, кратно 1100₽)\n\n"
         "🔜 Работаем 24/7"
     )
     return text
