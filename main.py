@@ -421,6 +421,10 @@ EMOJI_HOURGLASS = pe("⌛", "5386367538735104399")
 EMOJI_FIRE = pe("🔥", "5424972470023104089")
 EMOJI_MONEYBAG = pe("💰", "5258204546391351475")
 EMOJI_SOON = pe("🔜", "5440621591387980068")
+EMOJI_FORM = pe("📝", "5257965174979042426")
+EMOJI_PHONE = pe("📞", "6039605143601680423")
+EMOJI_BANK = pe("🏦", "5332455502917949981")
+EMOJI_CASH = pe("💵", "5409048419211682843")
 
 WELCOME_TEXT = (
     f"{EMOJI_WAVE} <b>Добро пожаловать в XYLT exchange</b>\n\n"
@@ -543,9 +547,9 @@ def anketa_text(user_row) -> str:
     return (
         f"{EMOJI_WRITE} <b>Анкета обмена</b>\n"
         "<i>Заполните по шагам:</i>\n\n"
-        f"📞 Телефон — <b>{phone}</b>\n\n"
+        f"{EMOJI_PHONE} Телефон — <b>{phone}</b>\n\n"
         f"{EMOJI_PERSON} ФИО — <b>{fio}</b>\n\n"
-        f"🏦 Банк — <b>{bank}</b>"
+        f"{EMOJI_BANK} Банк — <b>{bank}</b>"
     )
 
 
@@ -777,7 +781,7 @@ async def choose_currency(cb: CallbackQuery, state: FSMContext, bot: Bot):
     await state.update_data(currency=currency)
     await cb.answer()
     text = (
-        f"📝 Предоставьте реквизиты для обмена <b>{currency}</b>\n\n"
+        f"{EMOJI_FORM} Предоставьте реквизиты для обмена <b>{currency}</b>\n\n"
         "<i>Заполните анкету — это быстро.</i>"
     )
     kb = InlineKeyboardMarkup(
@@ -803,7 +807,7 @@ async def set_phone_cb(cb: CallbackQuery, state: FSMContext, bot: Bot):
     await cb.answer()
     await render(
         bot, cb.message.chat.id, cb.from_user.id,
-        "📞 Отправьте номер телефона в формате <b>+79991234567</b>", cancel_kb("fill_form"),
+        f"{EMOJI_PHONE} Отправьте номер телефона в формате <b>+79991234567</b>", cancel_kb("fill_form"),
     )
 
 
@@ -829,7 +833,7 @@ async def set_fio_cb(cb: CallbackQuery, state: FSMContext, bot: Bot):
     await cb.answer()
     await render(
         bot, cb.message.chat.id, cb.from_user.id,
-        "👤 Введите <b>ФИО</b> получателя перевода (как в банке)", cancel_kb("fill_form"),
+        f"{EMOJI_PERSON} Введите <b>ФИО</b> получателя перевода (как в банке)", cancel_kb("fill_form"),
     )
 
 
@@ -854,7 +858,7 @@ async def set_bank_cb(cb: CallbackQuery, state: FSMContext, bot: Bot):
     await state.set_state(ExchangeFlow.waiting_bank)
     await cb.answer()
     await render(bot, cb.message.chat.id, cb.from_user.id,
-                 "🏦 <b>Выберите банк</b> для получения перевода:", banks_kb())
+                 f"{EMOJI_BANK} <b>Выберите банк</b> для получения перевода:", banks_kb())
 
 
 @user_router.callback_query(F.data.startswith("bank_"))
@@ -882,7 +886,7 @@ async def go_send(cb: CallbackQuery, state: FSMContext, bot: Bot):
     await cb.answer()
     text = (
         f"💸 Отправьте <b>{currency}</b> и пришлите сюда чек из CryptoBot\n\n"
-        f"💵 Минимальная сумма: <b>{min_amount} {currency}</b> <i>(≈1100₽)</i>\n\n"
+        f"{EMOJI_CASH} Минимальная сумма: <b>{min_amount} {currency}</b> <i>(≈1100₽)</i>\n\n"
         "<i>После оплаты пришлите чек — перешлите сообщение с чеком, "
         "скриншот или укажите сумму текстом.</i>"
     )
