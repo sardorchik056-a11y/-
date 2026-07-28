@@ -398,10 +398,29 @@ BANKS = ["Сбер", "Тинькофф", "ВТБ", "Альфа", "Райффай
 
 PHONE_RE = re.compile(r"^\+?\d[\d\s\-()]{9,17}\d$")
 
+# ---- Премиум-эмодзи (по ID, вставляются только в текст сообщений, НЕ в кнопки —
+# Bot API не поддерживает entity-форматирование в тексте InlineKeyboardButton) ----
+
+def pe(char: str, emoji_id: str) -> str:
+    """Возвращает HTML-тег кастомного (премиум) эмодзи для parse_mode=HTML."""
+    return f'<tg-emoji emoji-id="{emoji_id}">{char}</tg-emoji>'
+
+
+EMOJI_WAVE = pe("👋", "5413694143601842851")
+EMOJI_EXCHANGE = pe("💱", "5402186569006210455")
+EMOJI_CHART_UP = pe("📈", "5244837092042750681")
+EMOJI_BAR_CHART = pe("📊", "5231200819986047254")
+EMOJI_WRITE = pe("✍️", "5197269100878907942")
+EMOJI_SUPPORT = pe("💭", "5904248647972820334")
+EMOJI_PERSON = pe("👤", "5258362837411045098")
+EMOJI_PERSON2 = pe("👤", "5258011929993026890")
+EMOJI_CALENDAR = pe("📅", "5890937706803894250")
+EMOJI_BACK = pe("⬅️", "6039539366177541657")
+
 WELCOME_TEXT = (
-    "👋 <b>Добро пожаловать в XYLT exchange</b>\n\n"
-    "💱 <b>Меняем USDT/GRAM → RUB</b>\n\n"
-    "📈 <b>Лучший курс на рынке</b>"
+    f"{EMOJI_WAVE} <b>Добро пожаловать в XYLT exchange</b>\n\n"
+    f"{EMOJI_EXCHANGE} <b>Меняем USDT/GRAM → RUB</b>\n\n"
+    f"{EMOJI_CHART_UP} <b>Лучший курс на рынке</b>"
 )
 
 # user_id -> message_id единственного "экранного" сообщения этого пользователя.
@@ -517,10 +536,10 @@ def anketa_text(user_row) -> str:
     fio = user_row["fio"] if user_row and user_row["fio"] else "не указано"
     bank = user_row["bank"] if user_row and user_row["bank"] else "не выбран"
     return (
-        "✍️ <b>Анкета обмена</b>\n"
+        f"{EMOJI_WRITE} <b>Анкета обмена</b>\n"
         "<i>Заполните по шагам:</i>\n\n"
         f"📞 Телефон — <b>{phone}</b>\n\n"
-        f"👤 ФИО — <b>{fio}</b>\n\n"
+        f"{EMOJI_PERSON} ФИО — <b>{fio}</b>\n\n"
         f"🏦 Банк — <b>{bank}</b>"
     )
 
@@ -622,10 +641,10 @@ async def show_profile_text(user_id: int, username: str | None) -> str:
     await db.ensure_user(user_id, username)
     u = await db.get_user(user_id)
     return (
-        "👤 <b>Ваш профиль</b>\n\n"
+        f"{EMOJI_PERSON2} <b>Ваш профиль</b>\n\n"
         f"🆔 ID: <b>{u['user_id']}</b>\n"
-        f"📅 <i>С нами с: {u['joined_at']}</i>\n\n"
-        "📊 <b>Статистика</b>\n"
+        f"{EMOJI_CALENDAR} <i>С нами с: {u['joined_at']}</i>\n\n"
+        f"{EMOJI_BAR_CHART} <b>Статистика</b>\n"
         f"• Оборот: <b>{fmt(u['turnover'])}</b> USDT\n"
         f"• Сумма обменов: <b>{fmt(u['total_rub'])}</b> ₽"
     )
@@ -665,7 +684,7 @@ async def rates_text() -> str:
         gram = rates["gram_rate"]
 
     text = (
-        "💱 <b>Актуальные курсы XYLT</b>\n\n"
+        f"{EMOJI_EXCHANGE} <b>Актуальные курсы XYLT</b>\n\n"
         "💎 <b>USDT/GRAM → RUB</b>\n"
         f"• до 150$: <b>{t1:.2f} ₽/$</b>\n"
         f"• 150–300$: <b>{t2:.2f} ₽/$</b>\n"
@@ -731,7 +750,7 @@ async def support_cb(cb: CallbackQuery, bot: Bot):
     await cb.answer()
     await render(
         bot, cb.message.chat.id, cb.from_user.id,
-        "💭 <b>Поддержка</b>\n\n<i>Если у вас вопрос по обмену — напишите нам напрямую:</i>", kb,
+        f"{EMOJI_SUPPORT} <b>Поддержка</b>\n\n<i>Если у вас вопрос по обмену — напишите нам напрямую:</i>", kb,
     )
 
 
