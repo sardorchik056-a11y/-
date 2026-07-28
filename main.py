@@ -416,6 +416,11 @@ EMOJI_PERSON = pe("👤", "5258362837411045098")
 EMOJI_PERSON2 = pe("👤", "5258011929993026890")
 EMOJI_CALENDAR = pe("📅", "5890937706803894250")
 EMOJI_BACK = pe("⬅️", "6039539366177541657")
+EMOJI_DIAMOND = pe("💎", "5427168083074628963")
+EMOJI_HOURGLASS = pe("⌛", "5386367538735104399")
+EMOJI_FIRE = pe("🔥", "5424972470023104089")
+EMOJI_MONEYBAG = pe("💰", "5258204546391351475")
+EMOJI_SOON = pe("🔜", "5440621591387980068")
 
 WELCOME_TEXT = (
     f"{EMOJI_WAVE} <b>Добро пожаловать в XYLT exchange</b>\n\n"
@@ -671,7 +676,7 @@ async def rates_text() -> str:
     boost_line = ""
     if settings["night_boost_enabled"]:
         boost_line = (
-            f"🔥 <b>Ночной буст:</b> {settings['night_boost_start']}–{settings['night_boost_end']} МСК "
+            f"{EMOJI_FIRE} <b>Ночной буст:</b> {settings['night_boost_start']}–{settings['night_boost_end']} МСК "
             f"<b>+{settings['night_boost_bonus']}₽</b> к курсу"
             + (" <i>(сейчас активен)</i>" if boosted else "")
         )
@@ -685,12 +690,12 @@ async def rates_text() -> str:
 
     text = (
         f"{EMOJI_EXCHANGE} <b>Актуальные курсы XYLT</b>\n\n"
-        "💎 <b>USDT/GRAM → RUB</b>\n"
+        f"{EMOJI_DIAMOND} <b>USDT/GRAM → RUB</b>\n"
         f"• до 150$: <b>{t1:.2f} ₽/$</b>\n"
         f"• 150–300$: <b>{t2:.2f} ₽/$</b>\n"
         f"• 300$+: <b>{t3:.2f} ₽/$</b>\n"
         f"• GRAM: <b>{gram:.2f} ₽</b>\n\n"
-        f"⌛ <i>В обработке: {pending} заявок</i>\n"
+        f"{EMOJI_HOURGLASS} <i>В обработке: {pending} заявок</i>\n"
     )
     if boost_line:
         text += boost_line + "\n"
@@ -698,10 +703,10 @@ async def rates_text() -> str:
     min_gram_live = calc_min_for_rate(gram)
 
     text += (
-        "\n💰 <b>Минималка</b>\n"
+        f"\n{EMOJI_MONEYBAG} <b>Минималка</b>\n"
         f"• USDT: <b>{min_usdt_live}</b> USDT <i>(≈1100₽)</i>\n"
         f"• GRAM: <b>{min_gram_live}</b> GRAM <i>(≈1100₽)</i>\n\n"
-        "🔜 <i>Работаем 24/7</i>"
+        f"{EMOJI_SOON} <i>Работаем 24/7</i>"
     )
     return text
 
