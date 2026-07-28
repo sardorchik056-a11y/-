@@ -630,6 +630,13 @@ async def show_profile_text(user_id: int, username: str | None) -> str:
     )
 
 
+def calc_min_for_rate(rate: float) -> float:
+    """Сколько USDT/GRAM нужно по текущему курсу, чтобы сумма была не меньше 1100₽."""
+    if not rate or rate <= 0:
+        return 0.0
+    return math.ceil((1100 / rate) * 100) / 100
+
+
 async def rates_text() -> str:
     rates = await db.get_rates()
     boosted, bonus = await is_night_boost_active()
@@ -667,14 +674,13 @@ async def rates_text() -> str:
     )
     if boost_line:
         text += boost_line + "\n"
-    min_gram_rub = rates["min_gram"] * gram
-    min_gram_rub_rounded = math.ceil(min_gram_rub / 1100) * 1100 if min_gram_rub > 0 else 0
+    min_usdt_live = calc_min_for_rate(t1)
+    min_gram_live = calc_min_for_rate(gram)
 
     text += (
         "\n💰 Минималка:\n"
-        f"• USDT: {rates['min_usdt']} USDT\n"
-        f"• GRAM: {rates['min_gram']} GRAM "
-        f"(≈{min_gram_rub_rounded}₽, кратно 1100₽)\n\n"
+        f"• USDT: {min_usdt_live} USDT (≈1100₽)\n"
+        f"• GRAM: {min_gram_live} GRAM (≈1100₽)\n\n"
         "🔜 Работаем 24/7"
     )
     return text
@@ -841,7 +847,12 @@ async def go_send(cb: CallbackQuery, state: FSMContext, bot: Bot):
     data = await state.get_data()
     currency = data.get("currency", "USDT")
     rates = await db.get_rates()
-    min_amount = rates["min_usdt"] if currency == "USDT" else rates["min_gram"]
+    boosted, bonus = await is_night_boost_active()
+    if currency == "USDT":
+        rate = rates["usdt_tier1"] + bonus if boosted else rates["usdt_tier1"]
+    else:
+        rate = rates["gram_rate"] + bonus if boosted else rates["gram_rate"]
+    min_amount = calc_min_for_rate(rate)
     await state.set_state(ExchangeFlow.waiting_receipt)
     await cb.answer()
     text = (
