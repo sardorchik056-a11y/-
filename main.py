@@ -399,9 +399,9 @@ BANKS = ["Сбер", "Тинькофф", "ВТБ", "Альфа", "Райффай
 PHONE_RE = re.compile(r"^\+?\d[\d\s\-()]{9,17}\d$")
 
 WELCOME_TEXT = (
-    "👋 Добро пожаловать в XYLT exchange\n"
-    "💱Меняем USDT/GRAM → RUB\n"
-    "📈Лучший курс на рынке"
+    "👋 <b>Добро пожаловать в XYLT exchange</b>\n\n"
+    "💱 <b>Меняем USDT/GRAM → RUB</b>\n\n"
+    "📈 <b>Лучший курс на рынке</b>"
 )
 
 # user_id -> message_id единственного "экранного" сообщения этого пользователя.
@@ -517,10 +517,11 @@ def anketa_text(user_row) -> str:
     fio = user_row["fio"] if user_row and user_row["fio"] else "не указано"
     bank = user_row["bank"] if user_row and user_row["bank"] else "не выбран"
     return (
-        "✍️ Анкета обмена\nЗаполните по шагам:\n\n"
-        f"📞 Телефон — {phone}\n"
-        f"👤 ФИО — {fio}\n"
-        f"🏦 Банк — {bank}"
+        "✍️ <b>Анкета обмена</b>\n"
+        "<i>Заполните по шагам:</i>\n\n"
+        f"📞 Телефон — <b>{phone}</b>\n\n"
+        f"👤 ФИО — <b>{fio}</b>\n\n"
+        f"🏦 Банк — <b>{bank}</b>"
     )
 
 
@@ -730,7 +731,7 @@ async def support_cb(cb: CallbackQuery, bot: Bot):
     await cb.answer()
     await render(
         bot, cb.message.chat.id, cb.from_user.id,
-        "💭 Поддержка\nЕсли у вас вопрос по обмену — напишите нам напрямую:", kb,
+        "💭 <b>Поддержка</b>\n\n<i>Если у вас вопрос по обмену — напишите нам напрямую:</i>", kb,
     )
 
 
@@ -742,7 +743,7 @@ async def exchange_start(cb: CallbackQuery, state: FSMContext, bot: Bot):
     await cb.answer()
     await render(
         bot, cb.message.chat.id, cb.from_user.id,
-        "💱 Выберите валюту для обмена\nОтдаёте → Получаете", currency_kb(),
+        "💱 <b>Выберите валюту для обмена</b>\n\n<i>Отдаёте → Получаете</i>", currency_kb(),
     )
 
 
@@ -752,8 +753,8 @@ async def choose_currency(cb: CallbackQuery, state: FSMContext, bot: Bot):
     await state.update_data(currency=currency)
     await cb.answer()
     text = (
-        f"📝 Предоставьте реквизиты для обмена {currency}\n"
-        "Заполните анкету — это быстро."
+        f"📝 Предоставьте реквизиты для обмена <b>{currency}</b>\n\n"
+        "<i>Заполните анкету — это быстро.</i>"
     )
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -778,7 +779,7 @@ async def set_phone_cb(cb: CallbackQuery, state: FSMContext, bot: Bot):
     await cb.answer()
     await render(
         bot, cb.message.chat.id, cb.from_user.id,
-        "📞 Отправьте номер телефона в формате +79991234567", cancel_kb("fill_form"),
+        "📞 Отправьте номер телефона в формате <b>+79991234567</b>", cancel_kb("fill_form"),
     )
 
 
@@ -788,7 +789,7 @@ async def set_phone_value(message: Message, state: FSMContext, bot: Bot):
     if not PHONE_RE.match(phone):
         await render(
             bot, message.chat.id, message.from_user.id,
-            "⚠️ Похоже, номер некорректный. Введите ещё раз, например +79991234567",
+            "⚠️ <b>Похоже, номер некорректный.</b>\n\nВведите ещё раз, например <b>+79991234567</b>",
             cancel_kb("fill_form"),
         )
         return
@@ -804,7 +805,7 @@ async def set_fio_cb(cb: CallbackQuery, state: FSMContext, bot: Bot):
     await cb.answer()
     await render(
         bot, cb.message.chat.id, cb.from_user.id,
-        "👤 Введите ФИО получателя перевода (как в банке)", cancel_kb("fill_form"),
+        "👤 Введите <b>ФИО</b> получателя перевода (как в банке)", cancel_kb("fill_form"),
     )
 
 
@@ -814,7 +815,7 @@ async def set_fio_value(message: Message, state: FSMContext, bot: Bot):
     if len(fio.split()) < 2 or len(fio) > 100:
         await render(
             bot, message.chat.id, message.from_user.id,
-            "⚠️ Введите ФИО полностью, например: Иванов Иван Иванович",
+            "⚠️ <b>Введите ФИО полностью</b>, например: <i>Иванов Иван Иванович</i>",
             cancel_kb("fill_form"),
         )
         return
@@ -829,7 +830,7 @@ async def set_bank_cb(cb: CallbackQuery, state: FSMContext, bot: Bot):
     await state.set_state(ExchangeFlow.waiting_bank)
     await cb.answer()
     await render(bot, cb.message.chat.id, cb.from_user.id,
-                 "🏦 Выберите банк для получения перевода:", banks_kb())
+                 "🏦 <b>Выберите банк</b> для получения перевода:", banks_kb())
 
 
 @user_router.callback_query(F.data.startswith("bank_"))
@@ -874,7 +875,7 @@ async def receive_receipt(message: Message, state: FSMContext, bot: Bot):
     user = await db.get_user(message.from_user.id)
     if not (user and user["phone"] and user["fio"] and user["bank"]):
         await render(bot, message.chat.id, message.from_user.id,
-                     "⚠️ Сначала заполните анкету полностью.", anketa_kb(user))
+                     "⚠️ <b>Сначала заполните анкету полностью.</b>", anketa_kb(user))
         return
 
     amount_guess = None
@@ -893,17 +894,17 @@ async def receive_receipt(message: Message, state: FSMContext, bot: Bot):
 
     await render(
         bot, message.chat.id, message.from_user.id,
-        f"🔎 Чек получен, заявка #{req_id} отправлена на проверку.\n"
-        "Обычно это занимает ~3 мин.",
+        f"🔎 Чек получен, заявка <b>#{req_id}</b> отправлена на проверку.\n\n"
+        "<i>Обычно это занимает ~3 мин.</i>",
         back_kb(),
     )
 
     caption = (
-        f"🆕 Новая заявка #{req_id}\n"
-        f"Пользователь: {message.from_user.id} (@{message.from_user.username})\n"
-        f"Валюта: {currency}\n"
-        f"Похоже, сумма в чеке: {amount_guess if amount_guess else 'не распознана'}\n"
-        f"Банк: {user['bank']}\nФИО: {user['fio']}\nТелефон: {user['phone']}"
+        f"🆕 <b>Новая заявка #{req_id}</b>\n\n"
+        f"Пользователь: <b>{message.from_user.id}</b> (@{message.from_user.username})\n"
+        f"Валюта: <b>{currency}</b>\n"
+        f"Похоже, сумма в чеке: <b>{amount_guess if amount_guess else 'не распознана'}</b>\n\n"
+        f"Банк: <b>{user['bank']}</b>\nФИО: <b>{user['fio']}</b>\nТелефон: <b>{user['phone']}</b>"
     )
     kb = InlineKeyboardMarkup(
         inline_keyboard=[[
@@ -933,7 +934,7 @@ async def user_confirm_request(cb: CallbackQuery, bot: Bot):
     await cb.answer()
     await render(
         bot, cb.message.chat.id, cb.from_user.id,
-        f"🔎 Ищем оператора для обмена #{req_id}\n⏱ Обычно это занимает ~3 мин",
+        f"🔎 <b>Ищем оператора</b> для обмена #{req_id}\n\n⏱ <i>Обычно это занимает ~3 мин</i>",
     )
 
     kb = InlineKeyboardMarkup(
@@ -946,7 +947,7 @@ async def user_confirm_request(cb: CallbackQuery, bot: Bot):
         try:
             await bot.send_message(
                 admin_id,
-                f"✔️ Пользователь подтвердил заявку #{req_id}, ищем оператора.",
+                f"✔️ Пользователь подтвердил заявку <b>#{req_id}</b>, ищем оператора.",
                 reply_markup=kb,
             )
         except Exception as e:
@@ -963,7 +964,7 @@ async def user_cancel_request(cb: CallbackQuery, bot: Bot):
     await db.set_request_status(req_id, "cancelled")
     await cb.answer("Заявка отменена")
     await render(bot, cb.message.chat.id, cb.from_user.id,
-                 f"❌ Заявка #{req_id} отменена.", back_kb())
+                 f"❌ Заявка <b>#{req_id}</b> отменена.", back_kb())
 
 
 @user_router.callback_query(F.data.startswith("rate_"))
@@ -972,7 +973,7 @@ async def user_rate_request(cb: CallbackQuery, bot: Bot):
     await db.set_rating(int(req_id), int(stars))
     await cb.answer("Спасибо за оценку!")
     await render(bot, cb.message.chat.id, cb.from_user.id,
-                 f"⭐ Спасибо за оценку ({stars}/5)!", back_kb())
+                 f"⭐ <b>Спасибо за оценку ({stars}/5)!</b>", back_kb())
 
 
 @user_router.message(F.text & ~F.text.startswith("/"))
@@ -982,7 +983,7 @@ async def fallback_message(message: Message, state: FSMContext, bot: Bot):
         return  # уже обрабатывается другим хэндлером/состоянием
     await render(
         bot, message.chat.id, message.from_user.id,
-        WELCOME_TEXT + "\n\nИспользуйте кнопки ниже 👇", main_menu_kb(),
+        WELCOME_TEXT + "\n\n<i>Используйте кнопки ниже 👇</i>", main_menu_kb(),
     )
 
 # ============================== ADMIN ROUTER ================================
@@ -996,26 +997,26 @@ admin_router.callback_query.filter(lambda c: is_admin(c.from_user.id))
 async def admin_panel(message: Message, state: FSMContext, bot: Bot):
     await state.clear()
     USER_ANCHOR.pop(message.from_user.id, None)
-    await render(bot, message.chat.id, message.from_user.id, "🛠 XYLT Admin", admin_main_kb())
+    await render(bot, message.chat.id, message.from_user.id, "🛠 <b>XYLT Admin</b>", admin_main_kb())
 
 
 @admin_router.callback_query(F.data == "a_home")
 async def admin_home_cb(cb: CallbackQuery, state: FSMContext, bot: Bot):
     await state.clear()
     await cb.answer()
-    await render(bot, cb.message.chat.id, cb.from_user.id, "🛠 XYLT Admin", admin_main_kb())
+    await render(bot, cb.message.chat.id, cb.from_user.id, "🛠 <b>XYLT Admin</b>", admin_main_kb())
 
 
 @admin_router.callback_query(F.data == "a_stats")
 async def admin_stats(cb: CallbackQuery, bot: Bot):
     s = await db.stats()
     text = (
-        "📊 Статистика XYLT\n\n"
-        f"👥 Пользователей: {s['users']}\n"
-        f"✅ Завершено обменов: {s['completed']}\n"
-        f"💰 Общий объём: {fmt(s['total_amount'])} (USDT/GRAM)\n"
-        f"💸 Выплачено: {fmt(s['total_rub'])} ₽\n"
-        f"⌛ В обработке: {s['pending']}"
+        "📊 <b>Статистика XYLT</b>\n\n"
+        f"👥 Пользователей: <b>{s['users']}</b>\n"
+        f"✅ Завершено обменов: <b>{s['completed']}</b>\n"
+        f"💰 Общий объём: <b>{fmt(s['total_amount'])}</b> (USDT/GRAM)\n"
+        f"💸 Выплачено: <b>{fmt(s['total_rub'])}</b> ₽\n"
+        f"⌛ В обработке: <b>{s['pending']}</b>"
     )
     await cb.answer()
     await render(bot, cb.message.chat.id, cb.from_user.id, text, admin_back_kb())
@@ -1027,7 +1028,7 @@ async def admin_requests(cb: CallbackQuery, bot: Bot):
     await cb.answer()
     if not reqs:
         await render(bot, cb.message.chat.id, cb.from_user.id,
-                     "📋 Активных заявок нет.", admin_back_kb())
+                     "📋 <b>Активных заявок нет.</b>", admin_back_kb())
         return
     rows = []
     for r in reqs:
@@ -1035,7 +1036,7 @@ async def admin_requests(cb: CallbackQuery, bot: Bot):
         rows.append([InlineKeyboardButton(text=label, callback_data=f"a_view_{r['id']}")])
     rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="a_home")])
     await render(bot, cb.message.chat.id, cb.from_user.id,
-                 "📋 Активные заявки:", InlineKeyboardMarkup(inline_keyboard=rows))
+                 "📋 <b>Активные заявки:</b>", InlineKeyboardMarkup(inline_keyboard=rows))
 
 
 @admin_router.callback_query(F.data.startswith("a_view_"))
@@ -1045,18 +1046,18 @@ async def admin_view_request(cb: CallbackQuery, bot: Bot):
     await cb.answer()
     if not r:
         await render(bot, cb.message.chat.id, cb.from_user.id,
-                     "Заявка не найдена.", admin_back_kb())
+                     "<b>Заявка не найдена.</b>", admin_back_kb())
         return
     text = (
-        f"Заявка #{r['id']}\n"
-        f"Пользователь: {r['user_id']}\n"
-        f"Валюта: {r['currency']}\n"
-        f"Сумма: {r['amount']}\n"
-        f"Курс: {r['rate']}\n"
-        f"К выплате: {r['rub_amount']} ₽\n"
-        f"Банк: {r['bank']}\nФИО: {r['fio']}\nТелефон: {r['phone']}\n"
-        f"Статус: {r['status']}\n"
-        f"Оператор: {r['operator_username'] or '-'}"
+        f"<b>Заявка #{r['id']}</b>\n\n"
+        f"Пользователь: <b>{r['user_id']}</b>\n"
+        f"Валюта: <b>{r['currency']}</b>\n"
+        f"Сумма: <b>{r['amount']}</b>\n"
+        f"Курс: <b>{r['rate']}</b>\n"
+        f"К выплате: <b>{r['rub_amount']} ₽</b>\n\n"
+        f"Банк: <b>{r['bank']}</b>\nФИО: <b>{r['fio']}</b>\nТелефон: <b>{r['phone']}</b>\n\n"
+        f"Статус: <b>{r['status']}</b>\n"
+        f"Оператор: <b>{r['operator_username'] or '-'}</b>"
     )
     rows = []
     if r["status"] == "searching":
@@ -1079,7 +1080,7 @@ async def admin_review_request(cb: CallbackQuery, state: FSMContext):
     )
     await cb.answer()
     await safe_edit(
-        cb, f"✏️ Введите фактическую сумму из чека для заявки #{req_id} (например 250):"
+        cb, f"✏️ Введите фактическую сумму из чека для заявки <b>#{req_id}</b> (например 250):"
     )
 
 
@@ -1094,12 +1095,12 @@ async def admin_review_amount(message: Message, state: FSMContext, bot: Bot):
         if amount <= 0:
             raise ValueError
     except ValueError:
-        await message.answer("⚠️ Введите положительное число.")
+        await message.answer("⚠️ <b>Введите положительное число.</b>")
         return
 
     req = await db.get_request(req_id)
     if not req:
-        await message.answer("Заявка не найдена.")
+        await message.answer("<b>Заявка не найдена.</b>")
         await state.clear()
         return
 
@@ -1109,7 +1110,7 @@ async def admin_review_amount(message: Message, state: FSMContext, bot: Bot):
     await state.clear()
 
     confirm_text = (
-        f"✅ Заявка #{req_id}: {amount} {req['currency']} по курсу {rate} "
+        f"✅ Заявка <b>#{req_id}</b>: {amount} {req['currency']} по курсу {rate} "
         "→ отправлено пользователю на подтверждение."
     )
     if alert_chat_id and alert_msg_id:
@@ -1122,13 +1123,13 @@ async def admin_review_amount(message: Message, state: FSMContext, bot: Bot):
         await message.answer(confirm_text)
 
     user_text = (
-        "✔️ Чек принят!\n"
-        f"💵 Сумма в чеке: {amount} {req['currency']}\n"
-        f"📈 Курс: {rate} ₽/$\n"
-        f"💸 Получаете: {fmt(rub_amount)} ₽\n"
-        f"💳 Куда: {req['bank']}\n"
-        f"👤 ФИО: {req['fio']}\n\n"
-        "⚠️ После подтверждения заявка уходит в обработку."
+        "✔️ <b>Чек принят!</b>\n\n"
+        f"💵 Сумма в чеке: <b>{amount} {req['currency']}</b>\n"
+        f"📈 Курс: <b>{rate} ₽/$</b>\n"
+        f"💸 Получаете: <b>{fmt(rub_amount)} ₽</b>\n"
+        f"💳 Куда: <b>{req['bank']}</b>\n"
+        f"👤 ФИО: <b>{req['fio']}</b>\n\n"
+        "<i>⚠️ После подтверждения заявка уходит в обработку.</i>"
     )
     try:
         await render(bot, req["user_id"], req["user_id"], user_text, confirm_kb(req_id))
@@ -1145,16 +1146,16 @@ async def admin_take_request(cb: CallbackQuery, bot: Bot):
         return
     await db.assign_operator(req_id, cb.from_user.id, cb.from_user.username)
     await cb.answer("Вы взяли заявку в работу")
-    await safe_edit(cb, f"🙋 Вы оператор заявки #{req_id}.")
+    await safe_edit(cb, f"🙋 Вы оператор заявки <b>#{req_id}</b>.")
 
     try:
         await render(
             bot, req["user_id"], req["user_id"],
-            "✔️ Оператор найден!\n"
+            "✔️ <b>Оператор найден!</b>\n\n"
             f"👤 Оператор: @{cb.from_user.username or 'оператор'}\n"
-            f"✍️ Заявка #{req_id}\n"
-            f"🤑 {req['amount']} {req['currency']} → {fmt(req['rub_amount'])} ₽\n"
-            "Сейчас подключится к вашей заявке.",
+            f"✍️ Заявка <b>#{req_id}</b>\n"
+            f"🤑 <b>{req['amount']} {req['currency']}</b> → <b>{fmt(req['rub_amount'])} ₽</b>\n\n"
+            "<i>Сейчас подключится к вашей заявке.</i>",
         )
     except Exception as e:
         log.warning("Не удалось уведомить пользователя %s: %s", req["user_id"], e)
@@ -1170,16 +1171,16 @@ async def admin_complete_request(cb: CallbackQuery, bot: Bot):
     await db.complete_request(req_id)
     await db.add_turnover(req["user_id"], req["amount"], req["rub_amount"])
     await cb.answer("Заявка завершена")
-    await safe_edit(cb, f"✅ Заявка #{req_id} завершена.")
+    await safe_edit(cb, f"✅ Заявка <b>#{req_id}</b> завершена.")
 
     try:
         await render(
             bot, req["user_id"], req["user_id"],
-            f"🎉 Обмен #{req_id} завершён!\n"
-            f"💵 {req['amount']} {req['currency']} → {fmt(req['rub_amount'])} ₽\n"
+            f"🎉 <b>Обмен #{req_id} завершён!</b>\n\n"
+            f"💵 <b>{req['amount']} {req['currency']}</b> → <b>{fmt(req['rub_amount'])} ₽</b>\n"
             f"💳 {req['bank']}\n"
             f"👤 Оператор: @{req['operator_username'] or 'оператор'}\n\n"
-            "⭐️ Оцените работу сервиса:",
+            "⭐️ <i>Оцените работу сервиса:</i>",
             rating_kb(req_id),
         )
     except Exception as e:
@@ -1202,7 +1203,7 @@ async def admin_edit_rate(cb: CallbackQuery, state: FSMContext, bot: Bot):
     await state.update_data(field=field)
     await cb.answer()
     await render(bot, cb.message.chat.id, cb.from_user.id,
-                 f"Введите новое значение для {field}:", cancel_kb("a_rates"))
+                 f"Введите новое значение для <b>{field}</b>:", cancel_kb("a_rates"))
 
 
 @admin_router.message(AdminRates.waiting_value)
@@ -1213,7 +1214,7 @@ async def admin_edit_rate_value(message: Message, state: FSMContext, bot: Bot):
         value = float(message.text.replace(",", "."))
     except ValueError:
         await render(bot, message.chat.id, message.from_user.id,
-                     f"⚠️ Введите число для {field}:", cancel_kb("a_rates"))
+                     f"⚠️ Введите число для <b>{field}</b>:", cancel_kb("a_rates"))
         return
     await db.set_rate_field(field, value)
     await state.clear()
@@ -1227,9 +1228,9 @@ async def admin_edit_rate_value(message: Message, state: FSMContext, bot: Bot):
 def boost_text(s) -> str:
     status = "включён ✅" if s["night_boost_enabled"] else "выключен ❌"
     return (
-        f"🔔 Ночной буст: {status}\n"
-        f"Время: {s['night_boost_start']}–{s['night_boost_end']} МСК\n"
-        f"Бонус: +{s['night_boost_bonus']} ₽"
+        f"🔔 <b>Ночной буст:</b> {status}\n\n"
+        f"Время: <b>{s['night_boost_start']}–{s['night_boost_end']} МСК</b>\n"
+        f"Бонус: <b>+{s['night_boost_bonus']} ₽</b>"
     )
 
 
@@ -1265,7 +1266,7 @@ async def admin_boost_time(cb: CallbackQuery, state: FSMContext, bot: Bot):
     await state.set_state(AdminBoost.waiting_time)
     await cb.answer()
     await render(bot, cb.message.chat.id, cb.from_user.id,
-                 "Введите время в формате ЧЧ:ММ-ЧЧ:ММ (например 01:00-09:00):",
+                 "Введите время в формате <b>ЧЧ:ММ-ЧЧ:ММ</b> (например 01:00-09:00):",
                  cancel_kb("a_boost"))
 
 
@@ -1274,7 +1275,7 @@ async def admin_boost_time_value(message: Message, state: FSMContext, bot: Bot):
     m = re.match(r"^(\d{1,2}:\d{2})-(\d{1,2}:\d{2})$", message.text.strip())
     if not m:
         await render(bot, message.chat.id, message.from_user.id,
-                     "⚠️ Формат: 01:00-09:00", cancel_kb("a_boost"))
+                     "⚠️ Формат: <b>01:00-09:00</b>", cancel_kb("a_boost"))
         return
     await db.set_setting_field("night_boost_start", m.group(1))
     await db.set_setting_field("night_boost_end", m.group(2))
@@ -1288,7 +1289,7 @@ async def admin_boost_bonus(cb: CallbackQuery, state: FSMContext, bot: Bot):
     await state.set_state(AdminBoost.waiting_bonus)
     await cb.answer()
     await render(bot, cb.message.chat.id, cb.from_user.id,
-                 "Введите бонус в рублях (например 0.75):", cancel_kb("a_boost"))
+                 "Введите <b>бонус в рублях</b> (например 0.75):", cancel_kb("a_boost"))
 
 
 @admin_router.message(AdminBoost.waiting_bonus)
@@ -1312,7 +1313,7 @@ async def admin_users(cb: CallbackQuery, state: FSMContext, bot: Bot):
     await state.set_state(AdminUsers.waiting_id)
     await cb.answer()
     await render(bot, cb.message.chat.id, cb.from_user.id,
-                 "Введите user_id для просмотра профиля:", cancel_kb("a_home"))
+                 "Введите <b>user_id</b> для просмотра профиля:", cancel_kb("a_home"))
 
 
 @admin_router.message(AdminUsers.waiting_id)
@@ -1321,20 +1322,20 @@ async def admin_users_lookup(message: Message, state: FSMContext, bot: Bot):
         user_id = int(message.text.strip())
     except ValueError:
         await render(bot, message.chat.id, message.from_user.id,
-                     "⚠️ Введите числовой ID.", cancel_kb("a_home"))
+                     "⚠️ <b>Введите числовой ID.</b>", cancel_kb("a_home"))
         return
     u = await db.get_user(user_id)
     await state.clear()
     if not u:
         await render(bot, message.chat.id, message.from_user.id,
-                     "Пользователь не найден.", admin_back_kb())
+                     "<b>Пользователь не найден.</b>", admin_back_kb())
         return
     text = (
-        f"👤 ID: {u['user_id']} (@{u['username']})\n"
-        f"С нами с: {u['joined_at']}\n"
-        f"Телефон: {u['phone']}\nФИО: {u['fio']}\nБанк: {u['bank']}\n"
-        f"Оборот: {fmt(u['turnover'])}\nВыплачено: {fmt(u['total_rub'])} ₽\n"
-        f"Заблокирован: {'да' if u['is_blocked'] else 'нет'}"
+        f"👤 ID: <b>{u['user_id']}</b> (@{u['username']})\n\n"
+        f"С нами с: <b>{u['joined_at']}</b>\n\n"
+        f"Телефон: <b>{u['phone']}</b>\nФИО: <b>{u['fio']}</b>\nБанк: <b>{u['bank']}</b>\n\n"
+        f"Оборот: <b>{fmt(u['turnover'])}</b>\nВыплачено: <b>{fmt(u['total_rub'])} ₽</b>\n\n"
+        f"Заблокирован: <b>{'да' if u['is_blocked'] else 'нет'}</b>"
     )
     await render(bot, message.chat.id, message.from_user.id, text, admin_back_kb())
 
@@ -1354,7 +1355,7 @@ def blocks_kb() -> InlineKeyboardMarkup:
 async def admin_blocks(cb: CallbackQuery, bot: Bot):
     await cb.answer()
     await render(bot, cb.message.chat.id, cb.from_user.id,
-                 "🚫 Блокировки пользователей", blocks_kb())
+                 "🚫 <b>Блокировки пользователей</b>", blocks_kb())
 
 
 @admin_router.callback_query(F.data == "block_user")
@@ -1362,7 +1363,7 @@ async def admin_block_user_start(cb: CallbackQuery, state: FSMContext, bot: Bot)
     await state.set_state(AdminUsers.waiting_block_id)
     await cb.answer()
     await render(bot, cb.message.chat.id, cb.from_user.id,
-                 "Введите user_id для блокировки:", cancel_kb("a_blocks"))
+                 "Введите <b>user_id</b> для блокировки:", cancel_kb("a_blocks"))
 
 
 @admin_router.message(AdminUsers.waiting_block_id)
@@ -1371,12 +1372,12 @@ async def admin_block_user_value(message: Message, state: FSMContext, bot: Bot):
         user_id = int(message.text.strip())
     except ValueError:
         await render(bot, message.chat.id, message.from_user.id,
-                     "⚠️ Введите числовой ID.", cancel_kb("a_blocks"))
+                     "⚠️ <b>Введите числовой ID.</b>", cancel_kb("a_blocks"))
         return
     await db.update_user_field(user_id, "is_blocked", 1)
     await state.clear()
     await render(bot, message.chat.id, message.from_user.id,
-                 f"🚫 Пользователь {user_id} заблокирован.", blocks_kb())
+                 f"🚫 Пользователь <b>{user_id}</b> заблокирован.", blocks_kb())
 
 
 @admin_router.callback_query(F.data == "unblock_user")
@@ -1384,7 +1385,7 @@ async def admin_unblock_user_start(cb: CallbackQuery, state: FSMContext, bot: Bo
     await state.set_state(AdminUsers.waiting_unblock_id)
     await cb.answer()
     await render(bot, cb.message.chat.id, cb.from_user.id,
-                 "Введите user_id для разблокировки:", cancel_kb("a_blocks"))
+                 "Введите <b>user_id</b> для разблокировки:", cancel_kb("a_blocks"))
 
 
 @admin_router.message(AdminUsers.waiting_unblock_id)
@@ -1393,12 +1394,12 @@ async def admin_unblock_user_value(message: Message, state: FSMContext, bot: Bot
         user_id = int(message.text.strip())
     except ValueError:
         await render(bot, message.chat.id, message.from_user.id,
-                     "⚠️ Введите числовой ID.", cancel_kb("a_blocks"))
+                     "⚠️ <b>Введите числовой ID.</b>", cancel_kb("a_blocks"))
         return
     await db.update_user_field(user_id, "is_blocked", 0)
     await state.clear()
     await render(bot, message.chat.id, message.from_user.id,
-                 f"✅ Пользователь {user_id} разблокирован.", blocks_kb())
+                 f"✅ Пользователь <b>{user_id}</b> разблокирован.", blocks_kb())
 
 
 # ---- Поддержка (тикеты) ----
@@ -1409,11 +1410,11 @@ async def admin_support(cb: CallbackQuery, bot: Bot):
     await cb.answer()
     if not tickets:
         await render(bot, cb.message.chat.id, cb.from_user.id,
-                     "💬 Открытых обращений нет.", admin_back_kb())
+                     "💬 <b>Открытых обращений нет.</b>", admin_back_kb())
         return
-    lines = [f"#{t['id']} от {t['user_id']}: {t['message'][:60]}" for t in tickets[:20]]
+    lines = [f"<b>#{t['id']}</b> от {t['user_id']}: {t['message'][:60]}" for t in tickets[:20]]
     await render(bot, cb.message.chat.id, cb.from_user.id,
-                 "💬 Открытые обращения:\n\n" + "\n".join(lines), admin_back_kb())
+                 "💬 <b>Открытые обращения:</b>\n\n" + "\n".join(lines), admin_back_kb())
 
 
 # ---- Рассылка ----
@@ -1423,7 +1424,7 @@ async def admin_broadcast_start(cb: CallbackQuery, state: FSMContext, bot: Bot):
     await state.set_state(AdminBroadcastForm.waiting_text)
     await cb.answer()
     await render(bot, cb.message.chat.id, cb.from_user.id,
-                 "📢 Введите текст рассылки для всех пользователей:", cancel_kb("a_home"))
+                 "📢 Введите <b>текст рассылки</b> для всех пользователей:", cancel_kb("a_home"))
 
 
 @admin_router.message(AdminBroadcastForm.waiting_text)
@@ -1446,7 +1447,7 @@ async def admin_broadcast_send(message: Message, state: FSMContext, bot: Bot):
         )
         await db._conn.commit()
     await render(bot, message.chat.id, message.from_user.id,
-                 f"✅ Рассылка отправлена {sent} пользователям.", admin_main_kb())
+                 f"✅ Рассылка отправлена <b>{sent}</b> пользователям.", admin_main_kb())
 
 
 # ---- Настройки ----
@@ -1460,13 +1461,21 @@ def settings_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def settings_text(r) -> str:
+    return (
+        "⚙️ <b>Настройки</b>\n\n"
+        f"Мин. USDT: <b>{r['min_usdt']}</b>\n"
+        f"Мин. GRAM: <b>{r['min_gram']}</b>"
+    )
+
+
 @admin_router.callback_query(F.data == "a_settings")
 async def admin_settings(cb: CallbackQuery, bot: Bot):
     r = await db.get_rates()
     await cb.answer()
     await render(
         bot, cb.message.chat.id, cb.from_user.id,
-        f"⚙️ Настройки\nМин. USDT: {r['min_usdt']}\nМин. GRAM: {r['min_gram']}",
+        settings_text(r),
         settings_kb(),
     )
 
@@ -1476,7 +1485,7 @@ async def set_min_usdt_start(cb: CallbackQuery, state: FSMContext, bot: Bot):
     await state.set_state(AdminSettings.waiting_min_usdt)
     await cb.answer()
     await render(bot, cb.message.chat.id, cb.from_user.id,
-                 "Введите новую минималку USDT:", cancel_kb("a_settings"))
+                 "Введите новую <b>минималку USDT</b>:", cancel_kb("a_settings"))
 
 
 @admin_router.message(AdminSettings.waiting_min_usdt)
@@ -1485,14 +1494,13 @@ async def set_min_usdt_value(message: Message, state: FSMContext, bot: Bot):
         value = float(message.text.replace(",", "."))
     except ValueError:
         await render(bot, message.chat.id, message.from_user.id,
-                     "⚠️ Введите число.", cancel_kb("a_settings"))
+                     "⚠️ <b>Введите число.</b>", cancel_kb("a_settings"))
         return
     await db.set_rate_field("min_usdt", value)
     await state.clear()
     r = await db.get_rates()
     await render(bot, message.chat.id, message.from_user.id,
-                 f"⚙️ Настройки\nМин. USDT: {r['min_usdt']}\nМин. GRAM: {r['min_gram']}",
-                 settings_kb())
+                 settings_text(r), settings_kb())
 
 
 @admin_router.callback_query(F.data == "set_min_gram")
@@ -1500,7 +1508,7 @@ async def set_min_gram_start(cb: CallbackQuery, state: FSMContext, bot: Bot):
     await state.set_state(AdminSettings.waiting_min_gram)
     await cb.answer()
     await render(bot, cb.message.chat.id, cb.from_user.id,
-                 "Введите новую минималку GRAM:", cancel_kb("a_settings"))
+                 "Введите новую <b>минималку GRAM</b>:", cancel_kb("a_settings"))
 
 
 @admin_router.message(AdminSettings.waiting_min_gram)
@@ -1509,14 +1517,13 @@ async def set_min_gram_value(message: Message, state: FSMContext, bot: Bot):
         value = float(message.text.replace(",", "."))
     except ValueError:
         await render(bot, message.chat.id, message.from_user.id,
-                     "⚠️ Введите число.", cancel_kb("a_settings"))
+                     "⚠️ <b>Введите число.</b>", cancel_kb("a_settings"))
         return
     await db.set_rate_field("min_gram", value)
     await state.clear()
     r = await db.get_rates()
     await render(bot, message.chat.id, message.from_user.id,
-                 f"⚙️ Настройки\nМин. USDT: {r['min_usdt']}\nМин. GRAM: {r['min_gram']}",
-                 settings_kb())
+                 settings_text(r), settings_kb())
 
 
 # ============================== ENTRYPOINT ==================================
