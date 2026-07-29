@@ -398,33 +398,72 @@ BANKS = ["Сбер", "Тинькофф", "ВТБ", "Альфа", "Райффай
 
 PHONE_RE = re.compile(r"^\+?\d[\d\s\-()]{9,17}\d$")
 
-# ---- Премиум-эмодзи (по ID, вставляются только в текст сообщений, НЕ в кнопки —
-# Bot API не поддерживает entity-форматирование в тексте InlineKeyboardButton) ----
+# ---- Премиум-эмодзи (по ID) ----
+# С Bot API 9.4 кастомные эмодзи можно вставлять не только в текст сообщений
+# (через <tg-emoji emoji-id="...">) но и в сами кнопки — через параметр
+# icon_custom_emoji_id у InlineKeyboardButton/KeyboardButton (иконка показывается
+# слева от текста кнопки). Требуется aiogram >= 3.30 и доступ бота к премиум-
+# эмодзи (Premium-подписка у владельца бота ИЛИ купленный на Fragment юзернейм) —
+# то же самое условие, что уже нужно было для эмодзи в тексте ниже.
 
 def pe(char: str, emoji_id: str) -> str:
-    """Возвращает HTML-тег кастомного (премиум) эмодзи для parse_mode=HTML."""
+    """Возвращает HTML-тег кастомного (премиум) эмодзи для parse_mode=HTML (для текста)."""
     return f'<tg-emoji emoji-id="{emoji_id}">{char}</tg-emoji>'
 
 
-EMOJI_WAVE = pe("👋", "5413694143601842851")
-EMOJI_EXCHANGE = pe("💱", "5402186569006210455")
-EMOJI_CHART_UP = pe("📈", "5244837092042750681")
-EMOJI_BAR_CHART = pe("📊", "5231200819986047254")
-EMOJI_WRITE = pe("✍️", "5197269100878907942")
-EMOJI_SUPPORT = pe("💭", "5904248647972820334")
-EMOJI_PERSON = pe("👤", "5258362837411045098")
-EMOJI_PERSON2 = pe("👤", "5258011929993026890")
-EMOJI_CALENDAR = pe("📅", "5890937706803894250")
-EMOJI_BACK = pe("⬅️", "6039539366177541657")
-EMOJI_DIAMOND = pe("💎", "5427168083074628963")
-EMOJI_HOURGLASS = pe("⌛", "5386367538735104399")
-EMOJI_FIRE = pe("🔥", "5424972470023104089")
-EMOJI_MONEYBAG = pe("💰", "5258204546391351475")
-EMOJI_SOON = pe("🔜", "5440621591387980068")
-EMOJI_FORM = pe("📝", "5257965174979042426")
-EMOJI_PHONE = pe("📞", "6039605143601680423")
-EMOJI_BANK = pe("🏦", "5332455502917949981")
-EMOJI_CASH = pe("💵", "5409048419211682843")
+# Голые ID — используются и в pe() для текста, и в ibtn() для кнопок ниже.
+ID_WAVE = "5413694143601842851"
+ID_EXCHANGE = "5402186569006210455"
+ID_CHART_UP = "5244837092042750681"
+ID_BAR_CHART = "5231200819986047254"
+ID_WRITE = "5197269100878907942"
+ID_SUPPORT = "5904248647972820334"
+ID_PERSON = "5258362837411045098"
+ID_PERSON2 = "5258011929993026890"
+ID_CALENDAR = "5890937706803894250"
+ID_BACK = "6039539366177541657"
+ID_DIAMOND = "5427168083074628963"
+ID_HOURGLASS = "5386367538735104399"
+ID_FIRE = "5424972470023104089"
+ID_MONEYBAG = "5258204546391351475"
+ID_SOON = "5440621591387980068"
+ID_FORM = "5257965174979042426"
+ID_PHONE = "6039605143601680423"
+ID_BANK = "5332455502917949981"
+ID_CASH = "5409048419211682843"
+# Новые ID — для кнопок, для которых раньше не было своего эмодзи в тексте.
+# Взяты из открытого примера с рабочими значениями icon_custom_emoji_id для
+# Bot API 9.4 — перед боевым использованием стоит один раз проверить, что они
+# у тебя отображаются (см. пояснение в конце ответа, как достать свои ID).
+ID_CHECK = "5870633910337015697"      # ✅ галочка
+ID_CROSS = "5870657884844462243"      # ❌ крестик
+ID_MEGAPHONE = "6039422865189638057"  # 📣 мегафон
+
+EMOJI_WAVE = pe("👋", ID_WAVE)
+EMOJI_EXCHANGE = pe("💱", ID_EXCHANGE)
+EMOJI_CHART_UP = pe("📈", ID_CHART_UP)
+EMOJI_BAR_CHART = pe("📊", ID_BAR_CHART)
+EMOJI_WRITE = pe("✍️", ID_WRITE)
+EMOJI_SUPPORT = pe("💭", ID_SUPPORT)
+EMOJI_PERSON = pe("👤", ID_PERSON)
+EMOJI_PERSON2 = pe("👤", ID_PERSON2)
+EMOJI_CALENDAR = pe("📅", ID_CALENDAR)
+EMOJI_BACK = pe("⬅️", ID_BACK)
+EMOJI_DIAMOND = pe("💎", ID_DIAMOND)
+EMOJI_HOURGLASS = pe("⌛", ID_HOURGLASS)
+EMOJI_FIRE = pe("🔥", ID_FIRE)
+EMOJI_MONEYBAG = pe("💰", ID_MONEYBAG)
+EMOJI_SOON = pe("🔜", ID_SOON)
+EMOJI_FORM = pe("📝", ID_FORM)
+EMOJI_PHONE = pe("📞", ID_PHONE)
+EMOJI_BANK = pe("🏦", ID_BANK)
+EMOJI_CASH = pe("💵", ID_CASH)
+
+
+def ibtn(text: str, emoji_id: str = None, **kwargs) -> InlineKeyboardButton:
+    """InlineKeyboardButton с кастомной emoji-иконкой перед текстом (Bot API 9.4+).
+    emoji_id=None — обычная кнопка без иконки (как раньше)."""
+    return InlineKeyboardButton(text=text, icon_custom_emoji_id=emoji_id, **kwargs)
 
 WELCOME_TEXT = (
     f"{EMOJI_WAVE} <b>Добро пожаловать в XYLT exchange</b>\n\n"
@@ -507,25 +546,25 @@ async def render(bot: Bot, chat_id: int, user_id: int, text: str,
     USER_ANCHOR[user_id] = sent.message_id
 
 
-def back_kb(text="⬅️ Назад", cb="back_to_menu") -> InlineKeyboardMarkup:
+def back_kb(text="Назад", cb="back_to_menu") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text=text, callback_data=cb)]]
+        inline_keyboard=[[ibtn(text, ID_BACK, callback_data=cb)]]
     )
 
 
-def cancel_kb(cb_data: str, text="⬅️ Отмена") -> InlineKeyboardMarkup:
+def cancel_kb(cb_data: str, text="Отмена") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text=text, callback_data=cb_data)]]
+        inline_keyboard=[[ibtn(text, ID_BACK, callback_data=cb_data)]]
     )
 
 
 def main_menu_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="💱 Обменять", callback_data="menu_exchange"),
-             InlineKeyboardButton(text="📊 Курсы", callback_data="menu_rates")],
-            [InlineKeyboardButton(text="✍️ Мои профиль", callback_data="menu_profile"),
-             InlineKeyboardButton(text="💭 Поддержка", callback_data="menu_support")],
+            [ibtn("Обменять", ID_EXCHANGE, callback_data="menu_exchange"),
+             ibtn("Курсы", ID_BAR_CHART, callback_data="menu_rates")],
+            [ibtn("Мои профиль", ID_WRITE, callback_data="menu_profile"),
+             ibtn("Поддержка", ID_SUPPORT, callback_data="menu_support")],
         ]
     )
 
@@ -533,9 +572,9 @@ def main_menu_kb() -> InlineKeyboardMarkup:
 def currency_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="💲 USDT → RUB", callback_data="cur_USDT")],
-            [InlineKeyboardButton(text="💎 GRAM → RUB", callback_data="cur_GRAM")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_menu")],
+            [ibtn("USDT → RUB", ID_CASH, callback_data="cur_USDT")],
+            [ibtn("GRAM → RUB", ID_DIAMOND, callback_data="cur_GRAM")],
+            [ibtn("Назад", ID_BACK, callback_data="back_to_menu")],
         ]
     )
 
@@ -558,28 +597,28 @@ def anketa_kb(user_row) -> InlineKeyboardMarkup:
     fio_ok = "✅" if user_row and user_row["fio"] else ""
     bank_ok = "✅" if user_row and user_row["bank"] else ""
     rows = [
-        [InlineKeyboardButton(text=f"📞 Указать телефон {phone_ok}", callback_data="set_phone")],
-        [InlineKeyboardButton(text=f"👤 Указать ФИО {fio_ok}", callback_data="set_fio")],
-        [InlineKeyboardButton(text=f"🏦 Выбрать банк {bank_ok}", callback_data="set_bank")],
+        [ibtn(f"Указать телефон {phone_ok}", ID_PHONE, callback_data="set_phone")],
+        [ibtn(f"Указать ФИО {fio_ok}", ID_PERSON, callback_data="set_fio")],
+        [ibtn(f"Выбрать банк {bank_ok}", ID_BANK, callback_data="set_bank")],
     ]
     if user_row and user_row["phone"] and user_row["fio"] and user_row["bank"]:
-        rows.append([InlineKeyboardButton(text="💵 Отправить USDT", callback_data="go_send")])
-    rows.append([InlineKeyboardButton(text="📊 Курсы", callback_data="menu_rates")])
-    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_menu")])
+        rows.append([ibtn("Отправить USDT", ID_CASH, callback_data="go_send")])
+    rows.append([ibtn("Курсы", ID_BAR_CHART, callback_data="menu_rates")])
+    rows.append([ibtn("Назад", ID_BACK, callback_data="back_to_menu")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def banks_kb() -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton(text=b, callback_data=f"bank_{b}")] for b in BANKS]
-    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="fill_form")])
+    rows.append([ibtn("Назад", ID_BACK, callback_data="fill_form")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def confirm_kb(req_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="✔️ Подтвердить заявку", callback_data=f"confirm_{req_id}")],
-            [InlineKeyboardButton(text="❌ Отменить", callback_data=f"cancel_{req_id}")],
+            [ibtn("Подтвердить заявку", ID_CHECK, callback_data=f"confirm_{req_id}")],
+            [ibtn("Отменить", ID_CROSS, callback_data=f"cancel_{req_id}")],
         ]
     )
 
@@ -595,14 +634,14 @@ def rating_kb(req_id: int) -> InlineKeyboardMarkup:
 
 def admin_main_kb() -> InlineKeyboardMarkup:
     rows = [
-        [InlineKeyboardButton(text="📊 Стата", callback_data="a_stats")],
-        [InlineKeyboardButton(text="📋 Заявки", callback_data="a_requests")],
-        [InlineKeyboardButton(text="💱 Курсы", callback_data="a_rates")],
-        [InlineKeyboardButton(text="🔔 Ночной буст", callback_data="a_boost")],
-        [InlineKeyboardButton(text="👤 Юзеры", callback_data="a_users")],
-        [InlineKeyboardButton(text="🚫 Блокировки", callback_data="a_blocks")],
-        [InlineKeyboardButton(text="💬 Поддержка", callback_data="a_support")],
-        [InlineKeyboardButton(text="📢 Рассылка", callback_data="a_broadcast")],
+        [ibtn("Стата", ID_BAR_CHART, callback_data="a_stats")],
+        [ibtn("Заявки", ID_FORM, callback_data="a_requests")],
+        [ibtn("Курсы", ID_EXCHANGE, callback_data="a_rates")],
+        [ibtn("Ночной буст", ID_FIRE, callback_data="a_boost")],
+        [ibtn("Юзеры", ID_PERSON, callback_data="a_users")],
+        [ibtn("Блокировки", ID_CROSS, callback_data="a_blocks")],
+        [ibtn("Поддержка", ID_SUPPORT, callback_data="a_support")],
+        [ibtn("Рассылка", ID_MEGAPHONE, callback_data="a_broadcast")],
         [InlineKeyboardButton(text="⚙️ Настройки", callback_data="a_settings")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -610,17 +649,17 @@ def admin_main_kb() -> InlineKeyboardMarkup:
 
 def admin_back_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="a_home")]]
+        inline_keyboard=[[ibtn("Назад", ID_BACK, callback_data="a_home")]]
     )
 
 
 def rates_edit_kb() -> InlineKeyboardMarkup:
     rows = [
-        [InlineKeyboardButton(text="✏️ до 150$", callback_data="editrate_usdt_tier1")],
-        [InlineKeyboardButton(text="✏️ 150-300$", callback_data="editrate_usdt_tier2")],
-        [InlineKeyboardButton(text="✏️ 300$+", callback_data="editrate_usdt_tier3")],
-        [InlineKeyboardButton(text="✏️ GRAM", callback_data="editrate_gram_rate")],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="a_home")],
+        [ibtn("до 150$", ID_FORM, callback_data="editrate_usdt_tier1")],
+        [ibtn("150-300$", ID_FORM, callback_data="editrate_usdt_tier2")],
+        [ibtn("300$+", ID_FORM, callback_data="editrate_usdt_tier3")],
+        [ibtn("GRAM", ID_FORM, callback_data="editrate_gram_rate")],
+        [ibtn("Назад", ID_BACK, callback_data="a_home")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -751,9 +790,9 @@ async def rates_cb(cb: CallbackQuery, bot: Bot):
 async def support_cb(cb: CallbackQuery, bot: Bot):
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="💬 Написать в поддержку",
-                                  url=f"https://t.me/{SUPPORT_USERNAME}")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_menu")],
+            [ibtn("Написать в поддержку", ID_SUPPORT,
+                  url=f"https://t.me/{SUPPORT_USERNAME}")],
+            [ibtn("Назад", ID_BACK, callback_data="back_to_menu")],
         ]
     )
     await cb.answer()
@@ -787,7 +826,7 @@ async def choose_currency(cb: CallbackQuery, state: FSMContext, bot: Bot):
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="➡️ Заполнить", callback_data="fill_form")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_menu")],
+            [ibtn("Назад", ID_BACK, callback_data="back_to_menu")],
         ]
     )
     await render(bot, cb.message.chat.id, cb.from_user.id, text, kb)
@@ -936,8 +975,8 @@ async def receive_receipt(message: Message, state: FSMContext, bot: Bot):
     )
     kb = InlineKeyboardMarkup(
         inline_keyboard=[[
-            InlineKeyboardButton(text="✏️ Указать сумму и подтвердить",
-                                  callback_data=f"a_review_{req_id}")
+            ibtn("Указать сумму и подтвердить", ID_FORM,
+                 callback_data=f"a_review_{req_id}")
         ]]
     )
     for admin_id in ADMIN_IDS:
@@ -1062,7 +1101,7 @@ async def admin_requests(cb: CallbackQuery, bot: Bot):
     for r in reqs:
         label = f"#{r['id']} {r['currency']} [{r['status']}]"
         rows.append([InlineKeyboardButton(text=label, callback_data=f"a_view_{r['id']}")])
-    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="a_home")])
+    rows.append([ibtn("Назад", ID_BACK, callback_data="a_home")])
     await render(bot, cb.message.chat.id, cb.from_user.id,
                  "📋 <b>Активные заявки:</b>", InlineKeyboardMarkup(inline_keyboard=rows))
 
@@ -1092,9 +1131,9 @@ async def admin_view_request(cb: CallbackQuery, bot: Bot):
         rows.append([InlineKeyboardButton(text="🙋 Взять в работу",
                                            callback_data=f"a_take_{req_id}")])
     if r["status"] == "in_progress":
-        rows.append([InlineKeyboardButton(text="✅ Завершить",
-                                           callback_data=f"a_complete_{req_id}")])
-    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="a_requests")])
+        rows.append([ibtn("Завершить", ID_CHECK,
+                           callback_data=f"a_complete_{req_id}")])
+    rows.append([ibtn("Назад", ID_BACK, callback_data="a_requests")])
     await render(bot, cb.message.chat.id, cb.from_user.id, text,
                  InlineKeyboardMarkup(inline_keyboard=rows))
 
@@ -1263,12 +1302,15 @@ def boost_text(s) -> str:
 
 
 def boost_kb(s) -> InlineKeyboardMarkup:
-    toggle_text = "❌ Выключить" if s["night_boost_enabled"] else "✅ Включить"
+    if s["night_boost_enabled"]:
+        toggle_text, toggle_icon = "Выключить", ID_CROSS
+    else:
+        toggle_text, toggle_icon = "Включить", ID_CHECK
     rows = [
-        [InlineKeyboardButton(text=toggle_text, callback_data="boost_toggle")],
-        [InlineKeyboardButton(text="✏️ Изменить время", callback_data="boost_time")],
-        [InlineKeyboardButton(text="✏️ Изменить бонус", callback_data="boost_bonus")],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="a_home")],
+        [ibtn(toggle_text, toggle_icon, callback_data="boost_toggle")],
+        [ibtn("Изменить время", ID_FORM, callback_data="boost_time")],
+        [ibtn("Изменить бонус", ID_FORM, callback_data="boost_bonus")],
+        [ibtn("Назад", ID_BACK, callback_data="a_home")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -1372,9 +1414,9 @@ async def admin_users_lookup(message: Message, state: FSMContext, bot: Bot):
 
 def blocks_kb() -> InlineKeyboardMarkup:
     rows = [
-        [InlineKeyboardButton(text="🚫 Заблокировать по ID", callback_data="block_user")],
-        [InlineKeyboardButton(text="✅ Разблокировать по ID", callback_data="unblock_user")],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="a_home")],
+        [ibtn("Заблокировать по ID", ID_CROSS, callback_data="block_user")],
+        [ibtn("Разблокировать по ID", ID_CHECK, callback_data="unblock_user")],
+        [ibtn("Назад", ID_BACK, callback_data="a_home")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -1482,9 +1524,9 @@ async def admin_broadcast_send(message: Message, state: FSMContext, bot: Bot):
 
 def settings_kb() -> InlineKeyboardMarkup:
     rows = [
-        [InlineKeyboardButton(text="✏️ Мин. USDT", callback_data="set_min_usdt")],
-        [InlineKeyboardButton(text="✏️ Мин. GRAM", callback_data="set_min_gram")],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="a_home")],
+        [ibtn("Мин. USDT", ID_FORM, callback_data="set_min_usdt")],
+        [ibtn("Мин. GRAM", ID_FORM, callback_data="set_min_gram")],
+        [ibtn("Назад", ID_BACK, callback_data="a_home")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
