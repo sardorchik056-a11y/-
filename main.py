@@ -40,7 +40,7 @@ from aiogram.exceptions import TelegramBadRequest
 
 # ============================== CONFIG =====================================
 
-BOT_TOKEN = "8651956926:AAG3ML1uGBPQOgrM5WAMl3kXaRLvVxTHCsw"
+BOT_TOKEN = "8229572426:AAGRKLS4uJo-Lc2gso0ZTyoCDzH2V5NJl7c"
 
 # Токен приложения Crypto Pay (@CryptoBot -> Crypto Pay -> Create App).
 # Нужен для приёма оплаты через кнопку "Отправить" (createInvoice/getInvoices).
