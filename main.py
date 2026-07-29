@@ -21,6 +21,7 @@ import math
 import re
 from datetime import datetime, timedelta, timezone
 
+import aiohttp
 import aiosqlite
 from aiogram import Bot, Dispatcher, Router, F
 from aiogram.client.default import DefaultBotProperties
@@ -40,6 +41,11 @@ from aiogram.exceptions import TelegramBadRequest
 # ============================== CONFIG =====================================
 
 BOT_TOKEN = "8651956926:AAG3ML1uGBPQOgrM5WAMl3kXaRLvVxTHCsw"
+
+# Токен приложения Crypto Pay (@CryptoBot -> Crypto Pay -> Create App).
+# Нужен для приёма оплаты через кнопку "Отправить" (createInvoice/getInvoices).
+CRYPTO_PAY_TOKEN = "YOUR_CRYPTOBOT_API_TOKEN"
+CRYPTO_PAY_API = "https://pay.crypt.bot/api"
 
 # Telegram user_id админов, у которых есть доступ к /admin
 ADMIN_IDS: set[int] = {8118184388}
@@ -353,6 +359,56 @@ class DB:
 
 db = DB(DB_PATH)
 
+# ============================== CRYPTOBOT (@CryptoBot / @send) =============
+
+
+async def cryptobot_create_invoice(asset: str, amount: float, description: str = "") -> dict | None:
+    """Создаёт счёт на оплату через @CryptoBot (Crypto Pay API createInvoice)."""
+    url = f"{CRYPTO_PAY_API}/createInvoice"
+    headers = {"Crypto-Pay-API-Token": CRYPTO_PAY_TOKEN}
+    payload = {
+        "asset": asset,
+        "amount": str(amount),
+        "description": description or "Оплата обмена XYLT",
+    }
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                url, json=payload, headers=headers,
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                data = await resp.json()
+                if data.get("ok"):
+                    return data["result"]
+                log.warning("CryptoBot createInvoice error: %s", data)
+                return None
+    except Exception as e:
+        log.warning("CryptoBot createInvoice exception: %s", e)
+        return None
+
+
+async def cryptobot_get_invoice(invoice_id: int) -> dict | None:
+    """Проверяет статус счёта через @CryptoBot (Crypto Pay API getInvoices)."""
+    url = f"{CRYPTO_PAY_API}/getInvoices"
+    headers = {"Crypto-Pay-API-Token": CRYPTO_PAY_TOKEN}
+    params = {"invoice_ids": str(invoice_id)}
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                url, params=params, headers=headers,
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                data = await resp.json()
+                if data.get("ok"):
+                    items = data["result"]["items"]
+                    return items[0] if items else None
+                log.warning("CryptoBot getInvoices error: %s", data)
+                return None
+    except Exception as e:
+        log.warning("CryptoBot getInvoices exception: %s", e)
+        return None
+
+
 # ============================== FSM STATES =================================
 
 
@@ -362,7 +418,10 @@ class ExchangeFlow(StatesGroup):
     waiting_phone = State()
     waiting_fio = State()
     waiting_bank = State()
+    waiting_custom_bank = State()
     waiting_receipt = State()
+    waiting_invoice_amount = State()
+    waiting_invoice_payment = State()
 
 
 class AdminRates(StatesGroup):
@@ -552,10 +611,12 @@ def back_kb(text="Назад", cb="back_to_menu") -> InlineKeyboardMarkup:
     )
 
 
-def cancel_kb(cb_data: str, text="Отмена") -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[[ibtn(text, ID_BACK, callback_data=cb_data)]]
-    )
+def cancel_kb(cb_data: str, text="Отмена", emoji: bool = True) -> InlineKeyboardMarkup:
+    if emoji:
+        btn = ibtn(text, ID_BACK, callback_data=cb_data)
+    else:
+        btn = InlineKeyboardButton(text=text, callback_data=cb_data)
+    return InlineKeyboardMarkup(inline_keyboard=[[btn]])
 
 
 def main_menu_kb() -> InlineKeyboardMarkup:
@@ -608,8 +669,21 @@ def anketa_kb(user_row) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+BANK_EMOJI = {
+    "Сбер": "🟢",
+    "Тинькофф": "🟡",
+    "ВТБ": "🔵",
+    "Альфа": "🔴",
+    "Райффайзен": "🟠",
+    "Другой": "✏️",
+}
+
+
 def banks_kb() -> InlineKeyboardMarkup:
-    rows = [[InlineKeyboardButton(text=b, callback_data=f"bank_{b}")] for b in BANKS]
+    rows = [
+        [InlineKeyboardButton(text=f"{BANK_EMOJI.get(b, '🏦')} {b}", callback_data=f"bank_{b}")]
+        for b in BANKS
+    ]
     rows.append([ibtn("Назад", ID_BACK, callback_data="fill_form")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -626,7 +700,7 @@ def confirm_kb(req_id: int) -> InlineKeyboardMarkup:
 def rating_kb(req_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[[
-            InlineKeyboardButton(text=str(i), callback_data=f"rate_{req_id}_{i}")
+            InlineKeyboardButton(text=f"{i}⭐️", callback_data=f"rate_{req_id}_{i}")
             for i in range(1, 6)
         ]]
     )
@@ -634,39 +708,39 @@ def rating_kb(req_id: int) -> InlineKeyboardMarkup:
 
 def admin_main_kb() -> InlineKeyboardMarkup:
     rows = [
-        [ibtn("Стата", ID_BAR_CHART, callback_data="a_stats")],
-        [ibtn("Заявки", ID_FORM, callback_data="a_requests")],
-        [ibtn("Курсы", ID_EXCHANGE, callback_data="a_rates")],
-        [ibtn("Ночной буст", ID_FIRE, callback_data="a_boost")],
-        [ibtn("Юзеры", ID_PERSON, callback_data="a_users")],
-        [ibtn("Блокировки", ID_CROSS, callback_data="a_blocks")],
-        [ibtn("Поддержка", ID_SUPPORT, callback_data="a_support")],
-        [ibtn("Рассылка", ID_MEGAPHONE, callback_data="a_broadcast")],
-        [InlineKeyboardButton(text="⚙️ Настройки", callback_data="a_settings")],
+        [InlineKeyboardButton(text="Стата", callback_data="a_stats"),
+         InlineKeyboardButton(text="Заявки", callback_data="a_requests")],
+        [InlineKeyboardButton(text="Курсы", callback_data="a_rates"),
+         InlineKeyboardButton(text="Ночной буст", callback_data="a_boost")],
+        [InlineKeyboardButton(text="Юзеры", callback_data="a_users"),
+         InlineKeyboardButton(text="Блокировки", callback_data="a_blocks")],
+        [InlineKeyboardButton(text="Поддержка", callback_data="a_support"),
+         InlineKeyboardButton(text="Рассылка", callback_data="a_broadcast")],
+        [InlineKeyboardButton(text="Настройки", callback_data="a_settings")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def admin_back_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
-        inline_keyboard=[[ibtn("Назад", ID_BACK, callback_data="a_home")]]
+        inline_keyboard=[[InlineKeyboardButton(text="Назад", callback_data="a_home")]]
     )
 
 
 def rates_edit_kb() -> InlineKeyboardMarkup:
     rows = [
-        [ibtn("до 150$", ID_FORM, callback_data="editrate_usdt_tier1")],
-        [ibtn("150-300$", ID_FORM, callback_data="editrate_usdt_tier2")],
-        [ibtn("300$+", ID_FORM, callback_data="editrate_usdt_tier3")],
-        [ibtn("GRAM", ID_FORM, callback_data="editrate_gram_rate")],
-        [ibtn("Назад", ID_BACK, callback_data="a_home")],
+        [InlineKeyboardButton(text="до 150$", callback_data="editrate_usdt_tier1"),
+         InlineKeyboardButton(text="150-300$", callback_data="editrate_usdt_tier2")],
+        [InlineKeyboardButton(text="300$+", callback_data="editrate_usdt_tier3"),
+         InlineKeyboardButton(text="GRAM", callback_data="editrate_gram_rate")],
+        [InlineKeyboardButton(text="Назад", callback_data="a_home")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def admin_rates_text(r) -> str:
     return (
-        "💱 <b>Текущие курсы</b>\n"
+        "<b>Текущие курсы</b>\n"
         f"до 150$: <b>{r['usdt_tier1']}</b>\n"
         f"150-300$: <b>{r['usdt_tier2']}</b>\n"
         f"300$+: <b>{r['usdt_tier3']}</b>\n"
@@ -903,11 +977,36 @@ async def set_bank_cb(cb: CallbackQuery, state: FSMContext, bot: Bot):
 @user_router.callback_query(F.data.startswith("bank_"))
 async def set_bank_value(cb: CallbackQuery, state: FSMContext, bot: Bot):
     bank = cb.data.split("_", 1)[1]
+    if bank == "Другой":
+        await state.set_state(ExchangeFlow.waiting_custom_bank)
+        await cb.answer()
+        await render(
+            bot, cb.message.chat.id, cb.from_user.id,
+            f"{EMOJI_BANK} Введите <b>название вашего банка</b>:",
+            cancel_kb("set_bank"),
+        )
+        return
     await db.update_user_field(cb.from_user.id, "bank", bank)
     await state.set_state(ExchangeFlow.filling_form)
     await cb.answer("Банк сохранён")
     user = await db.get_user(cb.from_user.id)
     await render(bot, cb.message.chat.id, cb.from_user.id, anketa_text(user), anketa_kb(user))
+
+
+@user_router.message(ExchangeFlow.waiting_custom_bank)
+async def set_custom_bank_value(message: Message, state: FSMContext, bot: Bot):
+    bank = message.text.strip()
+    if not bank or len(bank) > 50:
+        await render(
+            bot, message.chat.id, message.from_user.id,
+            "⚠️ <b>Введите корректное название банка</b> (до 50 символов).",
+            cancel_kb("set_bank"),
+        )
+        return
+    await db.update_user_field(message.from_user.id, "bank", bank)
+    await state.set_state(ExchangeFlow.filling_form)
+    user = await db.get_user(message.from_user.id)
+    await render(bot, message.chat.id, message.from_user.id, anketa_text(user), anketa_kb(user))
 
 
 @user_router.callback_query(F.data == "go_send")
@@ -921,15 +1020,131 @@ async def go_send(cb: CallbackQuery, state: FSMContext, bot: Bot):
     else:
         rate = rates["gram_rate"] + bonus if boosted else rates["gram_rate"]
     min_amount = calc_min_for_rate(rate)
-    await state.set_state(ExchangeFlow.waiting_receipt)
+    await state.update_data(currency=currency)
+    await state.set_state(ExchangeFlow.waiting_invoice_amount)
     await cb.answer()
     text = (
-        f"💸 Отправьте <b>{currency}</b> и пришлите сюда чек из CryptoBot\n\n"
-        f"{EMOJI_CASH} Минимальная сумма: <b>{min_amount} {currency}</b> <i>(≈1100₽)</i>\n\n"
-        "<i>После оплаты пришлите чек — перешлите сообщение с чеком, "
-        "скриншот или укажите сумму текстом.</i>"
+        f"{EMOJI_CASH} Введите сумму <b>{currency}</b>, которую хотите отправить\n\n"
+        f"{EMOJI_MONEYBAG} Минимальная сумма: <b>{min_amount} {currency}</b> <i>(≈1100₽)</i>\n\n"
+        "<i>Бот создаст счёт на оплату через</i> @CryptoBot <i>на указанную сумму.</i>"
     )
     await render(bot, cb.message.chat.id, cb.from_user.id, text, cancel_kb("fill_form"))
+
+
+@user_router.message(ExchangeFlow.waiting_invoice_amount)
+async def invoice_amount_value(message: Message, state: FSMContext, bot: Bot):
+    data = await state.get_data()
+    currency = data.get("currency", "USDT")
+    try:
+        amount = float(message.text.replace(",", ".").strip())
+        if amount <= 0:
+            raise ValueError
+    except ValueError:
+        await render(
+            bot, message.chat.id, message.from_user.id,
+            "⚠️ <b>Введите положительное число.</b>", cancel_kb("fill_form"),
+        )
+        return
+
+    rate_preview = await compute_rate(currency, amount)
+    min_amount = calc_min_for_rate(rate_preview)
+    if amount < min_amount:
+        await render(
+            bot, message.chat.id, message.from_user.id,
+            f"⚠️ <b>Сумма меньше минимальной.</b>\n\nМинимум: <b>{min_amount} {currency}</b>",
+            cancel_kb("fill_form"),
+        )
+        return
+
+    invoice = await cryptobot_create_invoice(
+        currency, amount, description=f"XYLT обмен {amount} {currency}"
+    )
+    if not invoice:
+        await render(
+            bot, message.chat.id, message.from_user.id,
+            f"❌ <b>Не удалось создать счёт через</b> @CryptoBot.\n\n"
+            "<i>Попробуйте ещё раз чуть позже.</i>",
+            cancel_kb("fill_form"),
+        )
+        return
+
+    await state.update_data(
+        invoice_id=invoice["invoice_id"], invoice_amount=amount, currency=currency
+    )
+    await state.set_state(ExchangeFlow.waiting_invoice_payment)
+
+    pay_url = invoice.get("bot_invoice_url") or invoice.get("pay_url")
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=f"💳 Оплатить {amount} {currency}", url=pay_url)],
+            [InlineKeyboardButton(text="✅ Я оплатил",
+                                   callback_data=f"check_invoice_{invoice['invoice_id']}")],
+            [ibtn("Отмена", ID_BACK, callback_data="fill_form")],
+        ]
+    )
+    text = (
+        f"{EMOJI_EXCHANGE} <b>Счёт создан!</b>\n\n"
+        f"{EMOJI_CASH} Сумма: <b>{amount} {currency}</b>\n\n"
+        "<i>Оплатите по кнопке ниже, затем нажмите «Я оплатил».</i>"
+    )
+    await render(bot, message.chat.id, message.from_user.id, text, kb)
+
+
+@user_router.callback_query(F.data.startswith("check_invoice_"))
+async def check_invoice_cb(cb: CallbackQuery, state: FSMContext, bot: Bot):
+    invoice_id = int(cb.data.split("_", 2)[2])
+    data = await state.get_data()
+    amount = data.get("invoice_amount")
+    currency = data.get("currency", "USDT")
+
+    if amount is None:
+        await cb.answer("Заявка уже неактуальна", show_alert=True)
+        return
+
+    invoice = await cryptobot_get_invoice(invoice_id)
+    if not invoice or invoice.get("status") != "paid":
+        await cb.answer("❌ Оплата ещё не найдена. Попробуйте снова через минуту.",
+                         show_alert=True)
+        return
+
+    user = await db.get_user(cb.from_user.id)
+    if not (user and user["phone"] and user["fio"] and user["bank"]):
+        await cb.answer()
+        await render(bot, cb.message.chat.id, cb.from_user.id,
+                     "⚠️ <b>Сначала заполните анкету полностью.</b>", anketa_kb(user))
+        return
+
+    rate = await compute_rate(currency, amount)
+    rub_amount = round(amount * rate, 2)
+    req_id = await db.create_request(
+        cb.from_user.id, currency, user["fio"], user["phone"], user["bank"]
+    )
+    await db.set_request_amount_rate(req_id, amount, rate, rub_amount)
+    await state.clear()
+    await cb.answer("✅ Оплата подтверждена!")
+
+    user_text = (
+        f"✔️ <b>Оплата получена!</b>\n\n"
+        f"{EMOJI_CASH} Сумма: <b>{amount} {currency}</b>\n"
+        f"{EMOJI_CHART_UP} Курс: <b>{rate} ₽/$</b>\n"
+        f"{EMOJI_MONEYBAG} Получаете: <b>{fmt(rub_amount)} ₽</b>\n"
+        f"{EMOJI_BANK} Куда: <b>{user['bank']}</b>\n"
+        f"{EMOJI_PERSON} ФИО: <b>{user['fio']}</b>\n\n"
+        "<i>Подтвердите заявку — и она уйдёт в обработку.</i>"
+    )
+    await render(bot, cb.message.chat.id, cb.from_user.id, user_text, confirm_kb(req_id))
+
+    caption = (
+        f"Оплачена заявка #{req_id} (через @CryptoBot)\n\n"
+        f"Пользователь: {cb.from_user.id} (@{cb.from_user.username})\n"
+        f"Валюта: {currency}\nСумма: {amount}\nКурс: {rate}\nК выплате: {fmt(rub_amount)} ₽\n\n"
+        f"Банк: {user['bank']}\nФИО: {user['fio']}\nТелефон: {user['phone']}"
+    )
+    for admin_id in ADMIN_IDS:
+        try:
+            await bot.send_message(admin_id, caption)
+        except Exception as e:
+            log.warning("Не удалось уведомить админа %s: %s", admin_id, e)
 
 
 AMOUNT_RE = re.compile(r"(\d+(?:[.,]\d+)?)")
@@ -967,7 +1182,7 @@ async def receive_receipt(message: Message, state: FSMContext, bot: Bot):
     )
 
     caption = (
-        f"🆕 <b>Новая заявка #{req_id}</b>\n\n"
+        f"<b>Новая заявка #{req_id}</b>\n\n"
         f"Пользователь: <b>{message.from_user.id}</b> (@{message.from_user.username})\n"
         f"Валюта: <b>{currency}</b>\n"
         f"Похоже, сумма в чеке: <b>{amount_guess if amount_guess else 'не распознана'}</b>\n\n"
@@ -975,8 +1190,8 @@ async def receive_receipt(message: Message, state: FSMContext, bot: Bot):
     )
     kb = InlineKeyboardMarkup(
         inline_keyboard=[[
-            ibtn("Указать сумму и подтвердить", ID_FORM,
-                 callback_data=f"a_review_{req_id}")
+            InlineKeyboardButton(text="Указать сумму и подтвердить",
+                                  callback_data=f"a_review_{req_id}")
         ]]
     )
     for admin_id in ADMIN_IDS:
@@ -1006,7 +1221,7 @@ async def user_confirm_request(cb: CallbackQuery, bot: Bot):
 
     kb = InlineKeyboardMarkup(
         inline_keyboard=[[
-            InlineKeyboardButton(text="🙋 Взять заявку в работу",
+            InlineKeyboardButton(text="Взять заявку в работу",
                                   callback_data=f"a_take_{req_id}")
         ]]
     )
@@ -1014,7 +1229,7 @@ async def user_confirm_request(cb: CallbackQuery, bot: Bot):
         try:
             await bot.send_message(
                 admin_id,
-                f"✔️ Пользователь подтвердил заявку <b>#{req_id}</b>, ищем оператора.",
+                f"Пользователь подтвердил заявку <b>#{req_id}</b>, ищем оператора.",
                 reply_markup=kb,
             )
         except Exception as e:
@@ -1064,26 +1279,26 @@ admin_router.callback_query.filter(lambda c: is_admin(c.from_user.id))
 async def admin_panel(message: Message, state: FSMContext, bot: Bot):
     await state.clear()
     USER_ANCHOR.pop(message.from_user.id, None)
-    await render(bot, message.chat.id, message.from_user.id, "🛠 <b>XYLT Admin</b>", admin_main_kb())
+    await render(bot, message.chat.id, message.from_user.id, "<b>XYLT Admin</b>", admin_main_kb())
 
 
 @admin_router.callback_query(F.data == "a_home")
 async def admin_home_cb(cb: CallbackQuery, state: FSMContext, bot: Bot):
     await state.clear()
     await cb.answer()
-    await render(bot, cb.message.chat.id, cb.from_user.id, "🛠 <b>XYLT Admin</b>", admin_main_kb())
+    await render(bot, cb.message.chat.id, cb.from_user.id, "<b>XYLT Admin</b>", admin_main_kb())
 
 
 @admin_router.callback_query(F.data == "a_stats")
 async def admin_stats(cb: CallbackQuery, bot: Bot):
     s = await db.stats()
     text = (
-        "📊 <b>Статистика XYLT</b>\n\n"
-        f"👥 Пользователей: <b>{s['users']}</b>\n"
-        f"✅ Завершено обменов: <b>{s['completed']}</b>\n"
-        f"💰 Общий объём: <b>{fmt(s['total_amount'])}</b> (USDT/GRAM)\n"
-        f"💸 Выплачено: <b>{fmt(s['total_rub'])}</b> ₽\n"
-        f"⌛ В обработке: <b>{s['pending']}</b>"
+        "<b>Статистика XYLT</b>\n\n"
+        f"Пользователей: <b>{s['users']}</b>\n"
+        f"Завершено обменов: <b>{s['completed']}</b>\n"
+        f"Общий объём: <b>{fmt(s['total_amount'])}</b> (USDT/GRAM)\n"
+        f"Выплачено: <b>{fmt(s['total_rub'])}</b> ₽\n"
+        f"В обработке: <b>{s['pending']}</b>"
     )
     await cb.answer()
     await render(bot, cb.message.chat.id, cb.from_user.id, text, admin_back_kb())
@@ -1095,15 +1310,15 @@ async def admin_requests(cb: CallbackQuery, bot: Bot):
     await cb.answer()
     if not reqs:
         await render(bot, cb.message.chat.id, cb.from_user.id,
-                     "📋 <b>Активных заявок нет.</b>", admin_back_kb())
+                     "<b>Активных заявок нет.</b>", admin_back_kb())
         return
     rows = []
     for r in reqs:
         label = f"#{r['id']} {r['currency']} [{r['status']}]"
         rows.append([InlineKeyboardButton(text=label, callback_data=f"a_view_{r['id']}")])
-    rows.append([ibtn("Назад", ID_BACK, callback_data="a_home")])
+    rows.append([InlineKeyboardButton(text="Назад", callback_data="a_home")])
     await render(bot, cb.message.chat.id, cb.from_user.id,
-                 "📋 <b>Активные заявки:</b>", InlineKeyboardMarkup(inline_keyboard=rows))
+                 "<b>Активные заявки:</b>", InlineKeyboardMarkup(inline_keyboard=rows))
 
 
 @admin_router.callback_query(F.data.startswith("a_view_"))
@@ -1128,12 +1343,12 @@ async def admin_view_request(cb: CallbackQuery, bot: Bot):
     )
     rows = []
     if r["status"] == "searching":
-        rows.append([InlineKeyboardButton(text="🙋 Взять в работу",
+        rows.append([InlineKeyboardButton(text="Взять в работу",
                                            callback_data=f"a_take_{req_id}")])
     if r["status"] == "in_progress":
-        rows.append([ibtn("Завершить", ID_CHECK,
-                           callback_data=f"a_complete_{req_id}")])
-    rows.append([ibtn("Назад", ID_BACK, callback_data="a_requests")])
+        rows.append([InlineKeyboardButton(text="Завершить",
+                                           callback_data=f"a_complete_{req_id}")])
+    rows.append([InlineKeyboardButton(text="Назад", callback_data="a_requests")])
     await render(bot, cb.message.chat.id, cb.from_user.id, text,
                  InlineKeyboardMarkup(inline_keyboard=rows))
 
@@ -1147,7 +1362,7 @@ async def admin_review_request(cb: CallbackQuery, state: FSMContext):
     )
     await cb.answer()
     await safe_edit(
-        cb, f"✏️ Введите фактическую сумму из чека для заявки <b>#{req_id}</b> (например 250):"
+        cb, f"Введите фактическую сумму из чека для заявки <b>#{req_id}</b> (например 250):"
     )
 
 
@@ -1162,7 +1377,7 @@ async def admin_review_amount(message: Message, state: FSMContext, bot: Bot):
         if amount <= 0:
             raise ValueError
     except ValueError:
-        await message.answer("⚠️ <b>Введите положительное число.</b>")
+        await message.answer("<b>Введите положительное число.</b>")
         return
 
     req = await db.get_request(req_id)
@@ -1177,7 +1392,7 @@ async def admin_review_amount(message: Message, state: FSMContext, bot: Bot):
     await state.clear()
 
     confirm_text = (
-        f"✅ Заявка <b>#{req_id}</b>: {amount} {req['currency']} по курсу {rate} "
+        f"Заявка <b>#{req_id}</b>: {amount} {req['currency']} по курсу {rate} "
         "→ отправлено пользователю на подтверждение."
     )
     if alert_chat_id and alert_msg_id:
@@ -1213,7 +1428,7 @@ async def admin_take_request(cb: CallbackQuery, bot: Bot):
         return
     await db.assign_operator(req_id, cb.from_user.id, cb.from_user.username)
     await cb.answer("Вы взяли заявку в работу")
-    await safe_edit(cb, f"🙋 Вы оператор заявки <b>#{req_id}</b>.")
+    await safe_edit(cb, f"Вы оператор заявки <b>#{req_id}</b>.")
 
     try:
         await render(
@@ -1238,7 +1453,7 @@ async def admin_complete_request(cb: CallbackQuery, bot: Bot):
     await db.complete_request(req_id)
     await db.add_turnover(req["user_id"], req["amount"], req["rub_amount"])
     await cb.answer("Заявка завершена")
-    await safe_edit(cb, f"✅ Заявка <b>#{req_id}</b> завершена.")
+    await safe_edit(cb, f"Заявка <b>#{req_id}</b> завершена.")
 
     try:
         await render(
@@ -1270,7 +1485,7 @@ async def admin_edit_rate(cb: CallbackQuery, state: FSMContext, bot: Bot):
     await state.update_data(field=field)
     await cb.answer()
     await render(bot, cb.message.chat.id, cb.from_user.id,
-                 f"Введите новое значение для <b>{field}</b>:", cancel_kb("a_rates"))
+                 f"Введите новое значение для <b>{field}</b>:", cancel_kb("a_rates", emoji=False))
 
 
 @admin_router.message(AdminRates.waiting_value)
@@ -1281,7 +1496,7 @@ async def admin_edit_rate_value(message: Message, state: FSMContext, bot: Bot):
         value = float(message.text.replace(",", "."))
     except ValueError:
         await render(bot, message.chat.id, message.from_user.id,
-                     f"⚠️ Введите число для <b>{field}</b>:", cancel_kb("a_rates"))
+                     f"Введите число для <b>{field}</b>:", cancel_kb("a_rates", emoji=False))
         return
     await db.set_rate_field(field, value)
     await state.clear()
@@ -1293,24 +1508,21 @@ async def admin_edit_rate_value(message: Message, state: FSMContext, bot: Bot):
 # ---- Ночной буст ----
 
 def boost_text(s) -> str:
-    status = "включён ✅" if s["night_boost_enabled"] else "выключен ❌"
+    status = "включён" if s["night_boost_enabled"] else "выключен"
     return (
-        f"🔔 <b>Ночной буст:</b> {status}\n\n"
+        f"<b>Ночной буст:</b> {status}\n\n"
         f"Время: <b>{s['night_boost_start']}–{s['night_boost_end']} МСК</b>\n"
         f"Бонус: <b>+{s['night_boost_bonus']} ₽</b>"
     )
 
 
 def boost_kb(s) -> InlineKeyboardMarkup:
-    if s["night_boost_enabled"]:
-        toggle_text, toggle_icon = "Выключить", ID_CROSS
-    else:
-        toggle_text, toggle_icon = "Включить", ID_CHECK
+    toggle_text = "Выключить" if s["night_boost_enabled"] else "Включить"
     rows = [
-        [ibtn(toggle_text, toggle_icon, callback_data="boost_toggle")],
-        [ibtn("Изменить время", ID_FORM, callback_data="boost_time")],
-        [ibtn("Изменить бонус", ID_FORM, callback_data="boost_bonus")],
-        [ibtn("Назад", ID_BACK, callback_data="a_home")],
+        [InlineKeyboardButton(text=toggle_text, callback_data="boost_toggle"),
+         InlineKeyboardButton(text="Изменить время", callback_data="boost_time")],
+        [InlineKeyboardButton(text="Изменить бонус", callback_data="boost_bonus"),
+         InlineKeyboardButton(text="Назад", callback_data="a_home")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -1337,7 +1549,7 @@ async def admin_boost_time(cb: CallbackQuery, state: FSMContext, bot: Bot):
     await cb.answer()
     await render(bot, cb.message.chat.id, cb.from_user.id,
                  "Введите время в формате <b>ЧЧ:ММ-ЧЧ:ММ</b> (например 01:00-09:00):",
-                 cancel_kb("a_boost"))
+                 cancel_kb("a_boost", emoji=False))
 
 
 @admin_router.message(AdminBoost.waiting_time)
@@ -1345,7 +1557,7 @@ async def admin_boost_time_value(message: Message, state: FSMContext, bot: Bot):
     m = re.match(r"^(\d{1,2}:\d{2})-(\d{1,2}:\d{2})$", message.text.strip())
     if not m:
         await render(bot, message.chat.id, message.from_user.id,
-                     "⚠️ Формат: <b>01:00-09:00</b>", cancel_kb("a_boost"))
+                     "Формат: <b>01:00-09:00</b>", cancel_kb("a_boost", emoji=False))
         return
     await db.set_setting_field("night_boost_start", m.group(1))
     await db.set_setting_field("night_boost_end", m.group(2))
@@ -1359,7 +1571,7 @@ async def admin_boost_bonus(cb: CallbackQuery, state: FSMContext, bot: Bot):
     await state.set_state(AdminBoost.waiting_bonus)
     await cb.answer()
     await render(bot, cb.message.chat.id, cb.from_user.id,
-                 "Введите <b>бонус в рублях</b> (например 0.75):", cancel_kb("a_boost"))
+                 "Введите <b>бонус в рублях</b> (например 0.75):", cancel_kb("a_boost", emoji=False))
 
 
 @admin_router.message(AdminBoost.waiting_bonus)
@@ -1368,7 +1580,7 @@ async def admin_boost_bonus_value(message: Message, state: FSMContext, bot: Bot)
         value = float(message.text.replace(",", "."))
     except ValueError:
         await render(bot, message.chat.id, message.from_user.id,
-                     "⚠️ Введите число.", cancel_kb("a_boost"))
+                     "Введите число.", cancel_kb("a_boost", emoji=False))
         return
     await db.set_setting_field("night_boost_bonus", value)
     await state.clear()
@@ -1383,7 +1595,7 @@ async def admin_users(cb: CallbackQuery, state: FSMContext, bot: Bot):
     await state.set_state(AdminUsers.waiting_id)
     await cb.answer()
     await render(bot, cb.message.chat.id, cb.from_user.id,
-                 "Введите <b>user_id</b> для просмотра профиля:", cancel_kb("a_home"))
+                 "Введите <b>user_id</b> для просмотра профиля:", cancel_kb("a_home", emoji=False))
 
 
 @admin_router.message(AdminUsers.waiting_id)
@@ -1392,7 +1604,7 @@ async def admin_users_lookup(message: Message, state: FSMContext, bot: Bot):
         user_id = int(message.text.strip())
     except ValueError:
         await render(bot, message.chat.id, message.from_user.id,
-                     "⚠️ <b>Введите числовой ID.</b>", cancel_kb("a_home"))
+                     "<b>Введите числовой ID.</b>", cancel_kb("a_home", emoji=False))
         return
     u = await db.get_user(user_id)
     await state.clear()
@@ -1401,7 +1613,7 @@ async def admin_users_lookup(message: Message, state: FSMContext, bot: Bot):
                      "<b>Пользователь не найден.</b>", admin_back_kb())
         return
     text = (
-        f"👤 ID: <b>{u['user_id']}</b> (@{u['username']})\n\n"
+        f"ID: <b>{u['user_id']}</b> (@{u['username']})\n\n"
         f"С нами с: <b>{u['joined_at']}</b>\n\n"
         f"Телефон: <b>{u['phone']}</b>\nФИО: <b>{u['fio']}</b>\nБанк: <b>{u['bank']}</b>\n\n"
         f"Оборот: <b>{fmt(u['turnover'])}</b>\nВыплачено: <b>{fmt(u['total_rub'])} ₽</b>\n\n"
@@ -1414,9 +1626,9 @@ async def admin_users_lookup(message: Message, state: FSMContext, bot: Bot):
 
 def blocks_kb() -> InlineKeyboardMarkup:
     rows = [
-        [ibtn("Заблокировать по ID", ID_CROSS, callback_data="block_user")],
-        [ibtn("Разблокировать по ID", ID_CHECK, callback_data="unblock_user")],
-        [ibtn("Назад", ID_BACK, callback_data="a_home")],
+        [InlineKeyboardButton(text="Заблокировать по ID", callback_data="block_user"),
+         InlineKeyboardButton(text="Разблокировать по ID", callback_data="unblock_user")],
+        [InlineKeyboardButton(text="Назад", callback_data="a_home")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -1425,7 +1637,7 @@ def blocks_kb() -> InlineKeyboardMarkup:
 async def admin_blocks(cb: CallbackQuery, bot: Bot):
     await cb.answer()
     await render(bot, cb.message.chat.id, cb.from_user.id,
-                 "🚫 <b>Блокировки пользователей</b>", blocks_kb())
+                 "<b>Блокировки пользователей</b>", blocks_kb())
 
 
 @admin_router.callback_query(F.data == "block_user")
@@ -1433,7 +1645,7 @@ async def admin_block_user_start(cb: CallbackQuery, state: FSMContext, bot: Bot)
     await state.set_state(AdminUsers.waiting_block_id)
     await cb.answer()
     await render(bot, cb.message.chat.id, cb.from_user.id,
-                 "Введите <b>user_id</b> для блокировки:", cancel_kb("a_blocks"))
+                 "Введите <b>user_id</b> для блокировки:", cancel_kb("a_blocks", emoji=False))
 
 
 @admin_router.message(AdminUsers.waiting_block_id)
@@ -1442,12 +1654,12 @@ async def admin_block_user_value(message: Message, state: FSMContext, bot: Bot):
         user_id = int(message.text.strip())
     except ValueError:
         await render(bot, message.chat.id, message.from_user.id,
-                     "⚠️ <b>Введите числовой ID.</b>", cancel_kb("a_blocks"))
+                     "<b>Введите числовой ID.</b>", cancel_kb("a_blocks", emoji=False))
         return
     await db.update_user_field(user_id, "is_blocked", 1)
     await state.clear()
     await render(bot, message.chat.id, message.from_user.id,
-                 f"🚫 Пользователь <b>{user_id}</b> заблокирован.", blocks_kb())
+                 f"Пользователь <b>{user_id}</b> заблокирован.", blocks_kb())
 
 
 @admin_router.callback_query(F.data == "unblock_user")
@@ -1455,7 +1667,7 @@ async def admin_unblock_user_start(cb: CallbackQuery, state: FSMContext, bot: Bo
     await state.set_state(AdminUsers.waiting_unblock_id)
     await cb.answer()
     await render(bot, cb.message.chat.id, cb.from_user.id,
-                 "Введите <b>user_id</b> для разблокировки:", cancel_kb("a_blocks"))
+                 "Введите <b>user_id</b> для разблокировки:", cancel_kb("a_blocks", emoji=False))
 
 
 @admin_router.message(AdminUsers.waiting_unblock_id)
@@ -1464,12 +1676,12 @@ async def admin_unblock_user_value(message: Message, state: FSMContext, bot: Bot
         user_id = int(message.text.strip())
     except ValueError:
         await render(bot, message.chat.id, message.from_user.id,
-                     "⚠️ <b>Введите числовой ID.</b>", cancel_kb("a_blocks"))
+                     "<b>Введите числовой ID.</b>", cancel_kb("a_blocks", emoji=False))
         return
     await db.update_user_field(user_id, "is_blocked", 0)
     await state.clear()
     await render(bot, message.chat.id, message.from_user.id,
-                 f"✅ Пользователь <b>{user_id}</b> разблокирован.", blocks_kb())
+                 f"Пользователь <b>{user_id}</b> разблокирован.", blocks_kb())
 
 
 # ---- Поддержка (тикеты) ----
@@ -1480,11 +1692,11 @@ async def admin_support(cb: CallbackQuery, bot: Bot):
     await cb.answer()
     if not tickets:
         await render(bot, cb.message.chat.id, cb.from_user.id,
-                     "💬 <b>Открытых обращений нет.</b>", admin_back_kb())
+                     "<b>Открытых обращений нет.</b>", admin_back_kb())
         return
     lines = [f"<b>#{t['id']}</b> от {t['user_id']}: {t['message'][:60]}" for t in tickets[:20]]
     await render(bot, cb.message.chat.id, cb.from_user.id,
-                 "💬 <b>Открытые обращения:</b>\n\n" + "\n".join(lines), admin_back_kb())
+                 "<b>Открытые обращения:</b>\n\n" + "\n".join(lines), admin_back_kb())
 
 
 # ---- Рассылка ----
@@ -1494,7 +1706,7 @@ async def admin_broadcast_start(cb: CallbackQuery, state: FSMContext, bot: Bot):
     await state.set_state(AdminBroadcastForm.waiting_text)
     await cb.answer()
     await render(bot, cb.message.chat.id, cb.from_user.id,
-                 "📢 Введите <b>текст рассылки</b> для всех пользователей:", cancel_kb("a_home"))
+                 "Введите <b>текст рассылки</b> для всех пользователей:", cancel_kb("a_home", emoji=False))
 
 
 @admin_router.message(AdminBroadcastForm.waiting_text)
@@ -1517,23 +1729,23 @@ async def admin_broadcast_send(message: Message, state: FSMContext, bot: Bot):
         )
         await db._conn.commit()
     await render(bot, message.chat.id, message.from_user.id,
-                 f"✅ Рассылка отправлена <b>{sent}</b> пользователям.", admin_main_kb())
+                 f"Рассылка отправлена <b>{sent}</b> пользователям.", admin_main_kb())
 
 
 # ---- Настройки ----
 
 def settings_kb() -> InlineKeyboardMarkup:
     rows = [
-        [ibtn("Мин. USDT", ID_FORM, callback_data="set_min_usdt")],
-        [ibtn("Мин. GRAM", ID_FORM, callback_data="set_min_gram")],
-        [ibtn("Назад", ID_BACK, callback_data="a_home")],
+        [InlineKeyboardButton(text="Мин. USDT", callback_data="set_min_usdt"),
+         InlineKeyboardButton(text="Мин. GRAM", callback_data="set_min_gram")],
+        [InlineKeyboardButton(text="Назад", callback_data="a_home")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def settings_text(r) -> str:
     return (
-        "⚙️ <b>Настройки</b>\n\n"
+        "<b>Настройки</b>\n\n"
         f"Мин. USDT: <b>{r['min_usdt']}</b>\n"
         f"Мин. GRAM: <b>{r['min_gram']}</b>"
     )
@@ -1555,7 +1767,7 @@ async def set_min_usdt_start(cb: CallbackQuery, state: FSMContext, bot: Bot):
     await state.set_state(AdminSettings.waiting_min_usdt)
     await cb.answer()
     await render(bot, cb.message.chat.id, cb.from_user.id,
-                 "Введите новую <b>минималку USDT</b>:", cancel_kb("a_settings"))
+                 "Введите новую <b>минималку USDT</b>:", cancel_kb("a_settings", emoji=False))
 
 
 @admin_router.message(AdminSettings.waiting_min_usdt)
@@ -1564,7 +1776,7 @@ async def set_min_usdt_value(message: Message, state: FSMContext, bot: Bot):
         value = float(message.text.replace(",", "."))
     except ValueError:
         await render(bot, message.chat.id, message.from_user.id,
-                     "⚠️ <b>Введите число.</b>", cancel_kb("a_settings"))
+                     "<b>Введите число.</b>", cancel_kb("a_settings", emoji=False))
         return
     await db.set_rate_field("min_usdt", value)
     await state.clear()
@@ -1578,7 +1790,7 @@ async def set_min_gram_start(cb: CallbackQuery, state: FSMContext, bot: Bot):
     await state.set_state(AdminSettings.waiting_min_gram)
     await cb.answer()
     await render(bot, cb.message.chat.id, cb.from_user.id,
-                 "Введите новую <b>минималку GRAM</b>:", cancel_kb("a_settings"))
+                 "Введите новую <b>минималку GRAM</b>:", cancel_kb("a_settings", emoji=False))
 
 
 @admin_router.message(AdminSettings.waiting_min_gram)
@@ -1587,7 +1799,7 @@ async def set_min_gram_value(message: Message, state: FSMContext, bot: Bot):
         value = float(message.text.replace(",", "."))
     except ValueError:
         await render(bot, message.chat.id, message.from_user.id,
-                     "⚠️ <b>Введите число.</b>", cancel_kb("a_settings"))
+                     "<b>Введите число.</b>", cancel_kb("a_settings", emoji=False))
         return
     await db.set_rate_field("min_gram", value)
     await state.clear()
