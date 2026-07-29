@@ -44,7 +44,7 @@ BOT_TOKEN = "8651956926:AAG3ML1uGBPQOgrM5WAMl3kXaRLvVxTHCsw"
 
 # Токен приложения Crypto Pay (@CryptoBot -> Crypto Pay -> Create App).
 # Нужен для приёма оплаты через кнопку "Отправить" (createInvoice/getInvoices).
-CRYPTO_PAY_TOKEN = "YOUR_CRYPTOBOT_API_TOKEN"
+CRYPTO_PAY_TOKEN = "582363:AALEf7JOugnrQyrkMHzH5UrO7pdOjjYnTQy"
 CRYPTO_PAY_API = "https://pay.crypt.bot/api"
 
 # Telegram user_id админов, у которых есть доступ к /admin
