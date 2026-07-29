@@ -48,7 +48,7 @@ CRYPTO_PAY_TOKEN = "YOUR_CRYPTOBOT_API_TOKEN"
 CRYPTO_PAY_API = "https://pay.crypt.bot/api"
 
 # Telegram user_id админов, у которых есть доступ к /admin
-ADMIN_IDS: set[int] = {8118184388}
+ADMIN_IDS: set[int] = {8118184388, 8115654734}
 
 # username саппорта, куда ведёт кнопка "Поддержка" (без @)
 SUPPORT_USERNAME = "xylt_admin"
