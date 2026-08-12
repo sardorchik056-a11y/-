@@ -96,7 +96,26 @@ router = Router(name="garden")
 #   НАСТРОЙКИ
 # ==========================
 
-GARDEN_PLOT_COUNT = 3
+GARDEN_PLOT_COUNT = 6
+
+# Сколько грядок доступно бесплатно с самого начала (не требуют
+# открытия за монеты) — первая страница целиком. Остальные
+# (GARDEN_BASE_PLOT_COUNT..GARDEN_PLOT_COUNT-1) — платные, см.
+# PLOT_UNLOCK_COST/unlock_plot ниже. Ачивка "Все грядки заняты"
+# (garden_all_plots_full) намеренно привязана именно к этому базовому
+# числу, а не к GARDEN_PLOT_COUNT — иначе с добавлением платных грядок
+# она стала бы куда сложнее, чем задумывалась изначально.
+GARDEN_BASE_PLOT_COUNT = 3
+
+# Пагинация грядок на экране сада — по PLOTS_PER_PAGE штук на страницу.
+PLOTS_PER_PAGE = 3
+
+# Стоимость открытия дополнительных грядок (индекс грядки -> цена в Pn).
+PLOT_UNLOCK_COST = {
+    3: 5000,
+    4: 15000,
+    5: 50000,
+}
 
 # Пороги общего счётчика собранных фруктов (см. _bump_harvest_count) —
 # garden_harvest_10/100/1000/10000.
@@ -256,6 +275,14 @@ TEXTS = {
         "no_free_plot_toast": "Все грядки заняты — дождитесь урожая.",
         "time_min_sec": "{minutes} мин {seconds} сек",
         "time_sec": "{seconds} сек",
+        "title_page_suffix": " <i>(стр. {page}/{total})</i>",
+        "plot_locked_line": "🔒 <i>Грядка закрыта</i>",
+        "unlock_button": "🔓 Открыть — {cost} 🪙",
+        "unlocked_toast": "🌱 Открыта новая грядка!",
+        "unlock_not_enough_toast": "Не хватает монет, чтобы открыть эту грядку.",
+        "unlock_already_toast": "Эта грядка уже открыта.",
+        "page_prev_button": "◀️ Пред. страница",
+        "page_next_button": "След. страница ▶️",
     },
     "en": {
         "title": "🌿 <b>Garden</b>",
@@ -276,6 +303,14 @@ TEXTS = {
         "no_free_plot_toast": "All plots are taken — wait for the harvest.",
         "time_min_sec": "{minutes}m {seconds}s",
         "time_sec": "{seconds}s",
+        "title_page_suffix": " <i>(page {page}/{total})</i>",
+        "plot_locked_line": "🔒 <i>Plot locked</i>",
+        "unlock_button": "🔓 Unlock — {cost} 🪙",
+        "unlocked_toast": "🌱 A new plot is unlocked!",
+        "unlock_not_enough_toast": "Not enough coins to unlock this plot.",
+        "unlock_already_toast": "This plot is already unlocked.",
+        "page_prev_button": "◀️ Prev page",
+        "page_next_button": "Next page ▶️",
     },
 }
 
@@ -405,6 +440,63 @@ async def plant_crop(user_id: int, plot_index: int, crop_id: str, lang: str) -> 
         return planted_at
 
 
+async def _get_unlocked_extra_plots(user_id: int) -> set[int]:
+    """Индексы ДОПОЛНИТЕЛЬНЫХ грядок (>= GARDEN_BASE_PLOT_COUNT), уже
+    открытых игроком за монеты (см. unlock_plot). Первые
+    GARDEN_BASE_PLOT_COUNT грядок сюда не входят — они открыты всегда,
+    см. _is_plot_unlocked."""
+    db = await database.get_db()
+    async with db.execute(
+        "SELECT plot_index FROM garden_plot_unlocks WHERE user_id = ?", (user_id,)
+    ) as cursor:
+        return {row["plot_index"] async for row in cursor}
+
+
+def _is_plot_unlocked(plot_index: int, unlocked_extra: set[int]) -> bool:
+    return plot_index < GARDEN_BASE_PLOT_COUNT or plot_index in unlocked_extra
+
+
+async def unlock_plot(user_id: int, plot_index: int) -> str:
+    """Открывает платную грядку plot_index за монеты (PLOT_UNLOCK_COST).
+    Списание — через shop.charge_balance, та же Pn-экономика, что и
+    everywhere else в боте (см. bakery.buy_ingredient — тот же паттерн:
+    лок на user_id, проверка+списание одним вызовом, затем запись
+    результата). Возвращает:
+      "ok"          — открыто прямо сейчас
+      "already"     — уже была открыта раньше (ничего не списано)
+      "not_enough"  — не хватило монет (ничего не списано)
+      "invalid"     — этот индекс вообще не подлежит открытию за монеты
+                       (базовая грядка либо индекс вне диапазона)
+    Локальный импорт shop — во избежание цикла импортов (shop.py в
+    свою очередь импортирует garden.py на верхнем уровне, см. докстринг
+    модуля bakery.py)."""
+    if plot_index not in PLOT_UNLOCK_COST:
+        return "invalid"
+
+    import shop
+
+    async with database.user_lock(user_id):
+        db = await database.get_db()
+        async with db.execute(
+            "SELECT 1 FROM garden_plot_unlocks WHERE user_id = ? AND plot_index = ?",
+            (user_id, plot_index),
+        ) as cursor:
+            if await cursor.fetchone():
+                return "already"
+
+        charged = await shop.charge_balance(user_id, PLOT_UNLOCK_COST[plot_index])
+        if not charged:
+            return "not_enough"
+
+        await db.execute(
+            "INSERT OR IGNORE INTO garden_plot_unlocks (user_id, plot_index) VALUES (?, ?)",
+            (user_id, plot_index),
+        )
+        await database.flush()
+
+    return "ok"
+
+
 async def _plant_achievements(user_id: int) -> list[dict]:
     """Ачивки, привязанные к самому факту посадки: "Первая посадка" —
     за первую посадку когда-либо, "Все грядки заняты" — если после
@@ -420,7 +512,7 @@ async def _plant_achievements(user_id: int) -> list[dict]:
         occupied = (await cursor.fetchone())["cnt"]
 
     achv_ids = ["garden_first_plant"]
-    if occupied >= GARDEN_PLOT_COUNT:
+    if occupied >= GARDEN_BASE_PLOT_COUNT:
         achv_ids.append("garden_all_plots_full")
 
     results = []
@@ -773,6 +865,19 @@ async def ensure_achv_tables() -> None:
         )
         """
     )
+    # Какие платные грядки (индекс >= GARDEN_BASE_PLOT_COUNT) игрок уже
+    # открыл за монеты — см. PLOT_UNLOCK_COST/unlock_plot. Наличие
+    # строки означает "открыта"; первые GARDEN_BASE_PLOT_COUNT грядок
+    # тут не хранятся — они открыты у всех по умолчанию.
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS garden_plot_unlocks (
+            user_id INTEGER NOT NULL,
+            plot_index INTEGER NOT NULL,
+            PRIMARY KEY (user_id, plot_index)
+        )
+        """
+    )
     await database.commit()
     _register_progress_providers()
 
@@ -885,7 +990,7 @@ def _register_progress_providers() -> None:
             "garden_bamboo_100": (100, _progress_bamboo),
             "garden_all_crops": (len(CROPS), _progress_distinct_crops),
             "garden_basket_50": (50, _progress_basket_total),
-            "garden_all_plots_full": (GARDEN_PLOT_COUNT, _progress_plots_occupied),
+            "garden_all_plots_full": (GARDEN_BASE_PLOT_COUNT, _progress_plots_occupied),
             "garden_streak_7": (7, _progress_streak),
             "garden_streak_30": (30, _progress_streak),
             "garden_sell_50": (50, _progress_market_sales),
@@ -972,25 +1077,55 @@ async def record_instant_sell(user_id: int) -> dict | None:
 #   ОТРИСОВКА КАРТОЧКИ САДА
 # ==========================
 
-def _build_garden_view(lang: str, plots: list[aiosqlite.Row], inventory: dict[str, int]) -> tuple[str, object]:
+def _build_garden_view(
+    lang: str,
+    plots: list[aiosqlite.Row],
+    inventory: dict[str, int],
+    page: int,
+    unlocked_extra: set[int],
+) -> tuple[str, object]:
     t = TEXTS[lang]
     now = time.time()
 
-    lines = [t["title"], t["separator"]]
+    total_pages = (GARDEN_PLOT_COUNT + PLOTS_PER_PAGE - 1) // PLOTS_PER_PAGE
+    page = max(0, min(page, total_pages - 1))
+    start = page * PLOTS_PER_PAGE
+    page_plots = plots[start:start + PLOTS_PER_PAGE]
+
+    title = t["title"]
+    if total_pages > 1:
+        title += t["title_page_suffix"].format(page=page + 1, total=total_pages)
+    lines = [title, t["separator"]]
 
     builder = InlineKeyboardBuilder()
+    row_sizes = []
 
-    for plot in plots:
+    for plot in page_plots:
+        plot_index = plot["plot_index"]
         crop_id = plot["crop_id"]
+
+        if not _is_plot_unlocked(plot_index, unlocked_extra):
+            # Платная грядка, ещё не открытая — вместо посадки/роста
+            # показываем цену открытия (см. PLOT_UNLOCK_COST/unlock_plot).
+            lines.append(t["plot_locked_line"])
+            lines.append("")
+            builder.button(
+                text=t["unlock_button"].format(cost=PLOT_UNLOCK_COST[plot_index]),
+                callback_data=f"garden:unlock:{plot_index}",
+                style="primary",
+            )
+            row_sizes.append(1)
+            continue
 
         if crop_id is None:
             # Пустая грядка ничем не описывается в тексте — только кнопка,
             # чтобы что-то на ней посадить.
             builder.button(
                 text=t["plant_button"],
-                callback_data=f"garden:choose:{plot['plot_index']}",
+                callback_data=f"garden:choose:{plot_index}",
                 style="primary",
             )
+            row_sizes.append(1)
             continue
 
         # Сюда попадают только ещё растущие грядки — всё созревшее уже
@@ -1011,11 +1146,32 @@ def _build_garden_view(lang: str, plots: list[aiosqlite.Row], inventory: dict[st
         )
         builder.button(
             text=t["plot_button_growing"].format(emoji=crop["emoji"], percent=percent),
-            callback_data=f"garden:info:{plot['plot_index']}",
+            callback_data=f"garden:info:{plot_index}",
             style="primary",
         )
+        row_sizes.append(1)
 
         lines.append("")
+
+    # Навигация по страницам грядок — показывается, только если страниц
+    # больше одной (см. bakery._build_recipe_choice — тот же паттерн).
+    nav_count = 0
+    if page > 0:
+        builder.button(
+            text=t["page_prev_button"],
+            callback_data=f"garden:page:{page - 1}",
+            style="primary",
+        )
+        nav_count += 1
+    if page < total_pages - 1:
+        builder.button(
+            text=t["page_next_button"],
+            callback_data=f"garden:page:{page + 1}",
+            style="primary",
+        )
+        nav_count += 1
+    if nav_count:
+        row_sizes.append(nav_count)
 
     lines.append(t["basket_title"])
     if inventory:
@@ -1030,13 +1186,18 @@ def _build_garden_view(lang: str, plots: list[aiosqlite.Row], inventory: dict[st
 
     text = "\n".join(lines).rstrip()
 
-    builder.adjust(1)
+    builder.adjust(*row_sizes)
     return text, builder.as_markup()
 
 
 def _build_crop_choice(lang: str, plot_index: int) -> tuple[str, object]:
     t = TEXTS[lang]
     text = t["choose_crop_title"]
+
+    # Кнопка "Назад" должна вернуть на ту же страницу грядок, с которой
+    # была открыта эта грядка — вычисляем её из самого plot_index, не
+    # прокидывая page отдельным параметром через весь путь вызовов.
+    origin_page = plot_index // PLOTS_PER_PAGE
 
     builder = InlineKeyboardBuilder()
     for cid in CROP_ORDER:
@@ -1050,7 +1211,7 @@ def _build_crop_choice(lang: str, plot_index: int) -> tuple[str, object]:
             callback_data=f"garden:plant:{plot_index}:{cid}",
             style="primary",
         )
-    builder.button(text=t["back_button"], callback_data="garden:back", style="primary")
+    builder.button(text=t["back_button"], callback_data=f"garden:back:{origin_page}", style="primary")
     builder.adjust(1)
     return text, builder.as_markup()
 
@@ -1073,7 +1234,7 @@ async def _get_lang(state: FSMContext, user_id: int) -> str:
     return lang
 
 
-async def _render_and_send(message_or_callback, lang: str, edit: bool = False) -> None:
+async def _render_and_send(message_or_callback, lang: str, edit: bool = False, page: int = 0) -> None:
     user_id = (
         message_or_callback.from_user.id
         if isinstance(message_or_callback, Message)
@@ -1081,7 +1242,8 @@ async def _render_and_send(message_or_callback, lang: str, edit: bool = False) -
     )
     plots, achv_results = await _get_plots(user_id)
     inventory = await get_inventory(user_id)
-    text, markup = _build_garden_view(lang, plots, inventory)
+    unlocked_extra = await _get_unlocked_extra_plots(user_id)
+    text, markup = _build_garden_view(lang, plots, inventory, page, unlocked_extra)
 
     # Картинка раздела (см. admin.py: admin:sections, ключ "garden") —
     # если задана, экран сада отправляется/правится как фото с текстом
@@ -1131,6 +1293,13 @@ async def on_choose_crop(callback: CallbackQuery, state: FSMContext) -> None:
     lang = await _get_lang(state, callback.from_user.id)
     plot_index = int(callback.data.split(":")[2])
 
+    # Подстраховка от протухшей клавиатуры: если грядка платная и ещё
+    # не открыта, сажать на ней нельзя — экран посадки не открываем.
+    unlocked_extra = await _get_unlocked_extra_plots(callback.from_user.id)
+    if not _is_plot_unlocked(plot_index, unlocked_extra):
+        await callback.answer()
+        return
+
     text, markup = _build_crop_choice(lang, plot_index)
 
     import admin
@@ -1139,11 +1308,41 @@ async def on_choose_crop(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
 
 
-@router.callback_query(F.data == "garden:back")
+@router.callback_query(F.data.startswith("garden:back:"))
 async def on_back_to_garden(callback: CallbackQuery, state: FSMContext) -> None:
     lang = await _get_lang(state, callback.from_user.id)
-    await _render_and_send(callback, lang, edit=True)
+    page = int(callback.data.split(":")[2])
+    await _render_and_send(callback, lang, edit=True, page=page)
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("garden:page:"))
+async def on_garden_page(callback: CallbackQuery, state: FSMContext) -> None:
+    lang = await _get_lang(state, callback.from_user.id)
+    page = int(callback.data.split(":")[2])
+    await _render_and_send(callback, lang, edit=True, page=page)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("garden:unlock:"))
+async def on_unlock_plot(callback: CallbackQuery, state: FSMContext) -> None:
+    lang = await _get_lang(state, callback.from_user.id)
+    t = TEXTS[lang]
+    plot_index = int(callback.data.split(":")[2])
+
+    status = await unlock_plot(callback.from_user.id, plot_index)
+    if status == "not_enough":
+        await callback.answer(t["unlock_not_enough_toast"], show_alert=True)
+        return
+    if status == "already":
+        await callback.answer(t["unlock_already_toast"])
+    elif status == "ok":
+        await callback.answer(t["unlocked_toast"], show_alert=True)
+    else:
+        await callback.answer()
+        return
+
+    await _render_and_send(callback, lang, edit=True, page=plot_index // PLOTS_PER_PAGE)
 
 
 @router.callback_query(F.data.startswith("garden:plant:"))
@@ -1154,6 +1353,12 @@ async def on_plant(callback: CallbackQuery, state: FSMContext) -> None:
     _, _, plot_index_str, crop_id = callback.data.split(":")
     plot_index = int(plot_index_str)
     crop = CROPS[crop_id]
+
+    # Подстраховка от протухшей клавиатуры — см. on_choose_crop.
+    unlocked_extra = await _get_unlocked_extra_plots(callback.from_user.id)
+    if not _is_plot_unlocked(plot_index, unlocked_extra):
+        await callback.answer()
+        return
 
     planted_at = await plant_crop(callback.from_user.id, plot_index, crop_id, lang)
     if planted_at is None:
@@ -1172,7 +1377,7 @@ async def on_plant(callback: CallbackQuery, state: FSMContext) -> None:
         ),
         show_alert=True,
     )
-    await _render_and_send(callback, lang, edit=True)
+    await _render_and_send(callback, lang, edit=True, page=plot_index // PLOTS_PER_PAGE)
 
     # Ачивки "Первая посадка"/"Все грядки заняты" — за сам факт посадки.
     import achives
