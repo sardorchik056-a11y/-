@@ -378,6 +378,71 @@ RECIPE_ORDER = [
 RECIPES_PER_PAGE = 7
 
 
+# ==========================
+#   ЭКОНОМИКА ВЫПЕЧКИ (себестоимость и цены продажи)
+# ==========================
+# Себестоимость рецепта = стоимость купленных ингредиентов (INGREDIENTS)
+# + рыночная стоимость потраченных фруктов (по средней точке диапазона
+# shop.PRICE_RANGES для соответствующего фрукта — то есть фрукт учитывается
+# по цене, за которую его можно было бы продать напрямую, не тратя на
+# выпечку). Именно от этой себестоимости считаются:
+#   - цена мгновенного выкупа боту (INSTANT_SELL_MARGIN) — фиксированная,
+#     не зависит от текущих лотов на рынке (в отличие от фруктов, где
+#     мгновенная продажа идёт через shop.instant_sell_unit_price по общей
+#     формуле "-40% от средней цены лотов");
+#   - допустимый диапазон цены при выставлении лота на рынок
+#     (MARKET_MIN_MARGIN..MARKET_MAX_MARGIN).
+# Числа сознательно не захардкожены в отдельную таблицу (как раньше
+# shop.BAKERY_PRICE_RANGES) — они всегда пересчитываются от актуальных
+# INGREDIENTS/RECIPES/shop.PRICE_RANGES, поэтому подорожание ингредиентов
+# в лавке автоматически подтягивает и цену готовой выпечки, не давая
+# рецептам снова уйти в минус.
+
+INSTANT_SELL_MARGIN = 1.25   # выкуп ботом: +25% к себестоимости (внутри 20–30%)
+MARKET_MIN_MARGIN = 1.20     # мин. цена лота на рынке: +20% к себестоимости
+MARKET_MAX_MARGIN = 1.50     # макс. цена лота на рынке: +50% к себестоимости
+
+PRICE_ROUND_STEP = 10        # округление итоговых цен до кратного 10
+
+
+def _round_price(value: float, step: int = PRICE_ROUND_STEP) -> int:
+    return max(1, int(round(value / step) * step))
+
+
+def get_recipe_cost(recipe_id: str) -> int:
+    """Себестоимость изделия: сумма цен купленных ингредиентов +
+    рыночная стоимость фруктов (по средней точке shop.PRICE_RANGES)."""
+    recipe = RECIPES[recipe_id]
+
+    ingredients_cost = sum(
+        INGREDIENTS[ingredient_id]["price"] * qty
+        for ingredient_id, qty in recipe["ingredients"].items()
+    )
+
+    fruits_cost = 0.0
+    for fruit_id, qty in recipe["fruits"].items():
+        lo, hi = shop.PRICE_RANGES[fruit_id]
+        fruits_cost += (lo + hi) / 2 * qty
+
+    return round(ingredients_cost + fruits_cost)
+
+
+def get_instant_sell_price(recipe_id: str) -> int:
+    """Цена мгновенного выкупа боту — фикс. +25% к себестоимости,
+    не зависит от рыночных лотов (используется вместо общей формулы
+    shop.instant_sell_unit_price для item_type == ITEM_BAKERY)."""
+    return _round_price(get_recipe_cost(recipe_id) * INSTANT_SELL_MARGIN)
+
+
+def get_market_price_range(recipe_id: str) -> tuple[int, int]:
+    """Допустимый диапазон цены за штуку при выставлении лота на рынок:
+    от +20% до +50% к себестоимости."""
+    cost = get_recipe_cost(recipe_id)
+    lo = _round_price(cost * MARKET_MIN_MARGIN)
+    hi = _round_price(cost * MARKET_MAX_MARGIN)
+    return lo, hi
+
+
 def roll_hunger_restore(recipe_id: str) -> int:
     """Каждый вызов — новый случайный % восполнения голода для этого
     изделия, в пределах его диапазона (hunger_restore_min..max)."""
