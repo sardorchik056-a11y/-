@@ -30,7 +30,7 @@ import leaders
 # (поддержка Telegram Bot API 9.4). Если стоит более старая версия:
 #   pip install -U aiogram --break-system-packages
 
-BOT_TOKEN = "8991223350:AAHNyFO4R62SqBv1NB0nzbZbVz1OvguoNY4"
+BOT_TOKEN = "8841055640:AAE65cYHaE9XVEo2fQLwZ5kPxrR1Fncqm5Q"
 
 logging.basicConfig(level=logging.INFO)
 
