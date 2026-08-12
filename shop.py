@@ -184,25 +184,14 @@ ITEM_BAKERY = "bakery"
 # CE_*/CURRENCY* константы уже объявлены выше в этом файле.
 import bakery
 
-# Диапазоны цен на выпечку — по аналогии с PRICE_RANGES для фруктов, но
-# заметно выше: изделие "весит" сумму потраченных ингредиентов, фруктов
-# и времени выпечки, а не сырьё как таковое.
-BAKERY_PRICE_RANGES = {
-    "tangerine_muffin": (300, 600),
-    "apple_pie": (400, 750),
-    "pear_tart": (450, 800),
-    "grape_cupcake": (480, 850),
-    "banana_bread": (520, 900),
-    "mango_cheesecake": (650, 1100),
-    "pineapple_gateau": (850, 1400),
-    "apple_crumble": (350, 650),
-    "grape_banana_waffle": (600, 1000),
-    "mango_tangerine_tart": (600, 1000),
-    "pear_chocolate_brownie": (700, 1150),
-    "banana_pineapple_muffin": (550, 950),
-    "triple_fruit_gateau": (1200, 2000),
-    "royal_tropical_cake": (1800, 3000),
-}
+# Диапазоны цен на выпечку раньше жили тут отдельной статичной таблицей
+# (BAKERY_PRICE_RANGES) и были рассинхронизированы с реальной себестоимостью
+# рецептов — из-за этого продажа выпечки почти всегда уходила в минус.
+# Теперь диапазон считается динамически от себестоимости рецепта (сумма
+# цен ингредиентов + рыночная стоимость фруктов) — см.
+# bakery.get_market_price_range / bakery.get_recipe_cost. Так цена всегда
+# остаётся окупаемой, даже если цены на ингредиенты в лавке пекарни
+# поменяются.
 
 
 def _item_order(item_type: str) -> list:
@@ -214,7 +203,9 @@ def _item_meta(item_type: str, item_id: str) -> dict:
 
 
 def _price_range(item_type: str, item_id: str) -> tuple[int, int]:
-    return PRICE_RANGES[item_id] if item_type == ITEM_CROP else BAKERY_PRICE_RANGES[item_id]
+    if item_type == ITEM_CROP:
+        return PRICE_RANGES[item_id]
+    return bakery.get_market_price_range(item_id)
 
 
 async def _get_type_inventory(user_id: int, item_type: str) -> dict[str, int]:
@@ -283,6 +274,14 @@ async def get_average_market_price(item_type: str, item_id: str) -> float:
 
 
 async def instant_sell_unit_price(item_type: str, item_id: str) -> int:
+    if item_type == ITEM_BAKERY:
+        # У выпечки своя, независимая от текущих лотов на рынке цена
+        # выкупа — фикс. +25% к себестоимости рецепта (см.
+        # bakery.get_instant_sell_price). Общая формула "-40% от средней
+        # цены лотов" тут не подходит: для дорогой выпечки при узком
+        # рыночном диапазоне она легко уводит выкуп ниже себестоимости.
+        return bakery.get_instant_sell_price(item_id)
+
     avg = await get_average_market_price(item_type, item_id)
     price = round(avg * (1 - INSTANT_SELL_DISCOUNT))
     return max(1, price)
@@ -386,7 +385,7 @@ TEXTS = {
         "listing_limit_toast": f"У вас уже максимум лотов на рынке ({MAX_LISTINGS_PER_PLAYER}) — сначала снимите один из «Моих лотов», чтобы выставить новый.",
         "instant_category_title": (
             f"{CE_INSTANT} <b>Быстрая продажа боту</b>\n"
-            "<i>Бот покупает сразу, но на 40% дешевле рыночной цены. Выберите категорию:</i>"
+            "<i>Бот покупает сразу, без ожидания покупателя. Выберите категорию:</i>"
         ),
         "instant_choose_title": (
             f"{CE_INSTANT} <b>Быстрая продажа боту</b>\n"
@@ -395,7 +394,7 @@ TEXTS = {
         ),
         "instant_choose_title_bakery": (
             f"{CE_INSTANT} <b>Быстрая продажа боту</b>\n"
-            "<i>Бот покупает сразу, но на 40% дешевле рыночной цены. "
+            "<i>Бот покупает сразу, по фиксированной цене чуть выше себестоимости. "
             "Выберите изделие из витрины пекарни:</i>"
         ),
         "instant_item_button": f"{{price}}/шт · {{emoji}} {{name}} ×{{count}}",
@@ -496,7 +495,7 @@ TEXTS = {
         "listing_limit_toast": f"You already have the maximum number of listings ({MAX_LISTINGS_PER_PLAYER}) — remove one from \"My listings\" first to add a new one.",
         "instant_category_title": (
             f"{CE_INSTANT} <b>Instant sell to bot</b>\n"
-            "<i>The bot buys immediately, at 40% below market price. Choose a category:</i>"
+            "<i>The bot buys immediately, no need to wait for a buyer. Choose a category:</i>"
         ),
         "instant_choose_title": (
             f"{CE_INSTANT} <b>Instant sell to bot</b>\n"
@@ -505,7 +504,7 @@ TEXTS = {
         ),
         "instant_choose_title_bakery": (
             f"{CE_INSTANT} <b>Instant sell to bot</b>\n"
-            "<i>The bot buys immediately, at 40% below market price. "
+            "<i>The bot buys immediately, at a fixed price just above production cost. "
             "Choose an item from the bakery showcase:</i>"
         ),
         "instant_item_button": f"{{price}}/ea · {{emoji}} {{name}} ×{{count}}",
