@@ -103,7 +103,24 @@ class BakeryStates(StatesGroup):
 #   НАСТРОЙКИ
 # ==========================
 
-BAKERY_OVEN_COUNT = 2
+BAKERY_OVEN_COUNT = 4
+
+# Сколько печей доступно бесплатно с самого начала (первая страница
+# целиком) — остальные (BAKERY_BASE_OVEN_COUNT..BAKERY_OVEN_COUNT-1)
+# платные, см. OVEN_UNLOCK_COST/unlock_oven ниже. Ачивка "Обе печи в
+# деле" (bakery_both_ovens) намеренно привязана именно к этому базовому
+# числу — см. _check_bakery_achievements, — иначе с добавлением платных
+# печей она стала бы куда сложнее задуманного.
+BAKERY_BASE_OVEN_COUNT = 2
+
+# Пагинация печей на экране пекарни — по OVENS_PER_PAGE штук на страницу.
+OVENS_PER_PAGE = 2
+
+# Стоимость открытия дополнительных печей (индекс печи -> цена в Pn).
+OVEN_UNLOCK_COST = {
+    2: 15000,
+    3: 85000,
+}
 
 BAR_LENGTH = 10
 BAR_FILLED = "▰"
@@ -518,6 +535,13 @@ TEXTS = {
         "qty_invalid": "Введите целое число от 1 до {max}.",
         "bought_toast": f"Куплено: {{emoji}} {{name}} ×{{count}} за {{total}} {shop.CURRENCY_PLAIN}",
         "not_enough_pn_toast": "Не хватает Pn для покупки.",
+        # --- пагинация печей / открытие платных печей ---
+        "title_page_suffix": " <i>(стр. {page}/{total})</i>",
+        "oven_locked_line": "🔒 <i>Печь закрыта</i>",
+        "unlock_oven_button": f"🔓 Открыть — {{cost}} {shop.CURRENCY_PLAIN}",
+        "unlocked_oven_toast": "🔥 Открыта новая печь!",
+        "unlock_oven_not_enough_toast": f"Не хватает {shop.CURRENCY_PLAIN} для этой покупки.",
+        "unlock_oven_already_toast": "Эта печь уже открыта.",
     },
     "en": {
         "title": "🥐 <b>Bakery</b>",
@@ -799,6 +823,19 @@ async def ensure_achv_tables() -> None:
         )
         """
     )
+    # Какие платные печи (индекс >= BAKERY_BASE_OVEN_COUNT) игрок уже
+    # открыл за монеты — см. OVEN_UNLOCK_COST/unlock_oven. Наличие
+    # строки означает "открыта"; первые BAKERY_BASE_OVEN_COUNT печей
+    # тут не хранятся — они открыты у всех по умолчанию.
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS bakery_oven_unlocks (
+            user_id INTEGER NOT NULL,
+            oven_index INTEGER NOT NULL,
+            PRIMARY KEY (user_id, oven_index)
+        )
+        """
+    )
     await database.commit()
 
     _register_progress_providers()
@@ -1048,7 +1085,7 @@ async def _check_bakery_achievements(user_id: int, ovens: list) -> list[str]:
     achv_ids = []
 
     busy = sum(1 for o in ovens if o["recipe_id"] is not None)
-    if busy >= BAKERY_OVEN_COUNT:
+    if busy >= BAKERY_BASE_OVEN_COUNT:
         achv_ids.append("bakery_both_ovens")
 
     achv_ids += await _touch_oven_streak(user_id, busy > 0)
@@ -1215,6 +1252,56 @@ async def _get_ovens(user_id: int) -> list[aiosqlite.Row]:
             return await cursor.fetchall()
 
     return [rows[i] for i in range(BAKERY_OVEN_COUNT)]
+
+
+async def _get_unlocked_extra_ovens(user_id: int) -> set[int]:
+    """Индексы ДОПОЛНИТЕЛЬНЫХ печей (>= BAKERY_BASE_OVEN_COUNT), уже
+    открытых игроком за монеты (см. unlock_oven). Первые
+    BAKERY_BASE_OVEN_COUNT печей сюда не входят — они открыты всегда,
+    см. _is_oven_unlocked."""
+    db = await database.get_db()
+    async with db.execute(
+        "SELECT oven_index FROM bakery_oven_unlocks WHERE user_id = ?", (user_id,)
+    ) as cursor:
+        return {row["oven_index"] async for row in cursor}
+
+
+def _is_oven_unlocked(oven_index: int, unlocked_extra: set[int]) -> bool:
+    return oven_index < BAKERY_BASE_OVEN_COUNT or oven_index in unlocked_extra
+
+
+async def unlock_oven(user_id: int, oven_index: int) -> str:
+    """Открывает платную печь oven_index за монеты (OVEN_UNLOCK_COST).
+    Тот же паттерн, что и buy_ingredient выше: лок на user_id,
+    списание через shop.charge_balance, немедленный flush. Возвращает:
+      "ok"          — открыто прямо сейчас
+      "already"     — уже была открыта раньше (ничего не списано)
+      "not_enough"  — не хватило монет (ничего не списано)
+      "invalid"     — этот индекс вообще не подлежит открытию за монеты
+                       (базовая печь либо индекс вне диапазона)"""
+    if oven_index not in OVEN_UNLOCK_COST:
+        return "invalid"
+
+    async with database.user_lock(user_id):
+        db = await database.get_db()
+        async with db.execute(
+            "SELECT 1 FROM bakery_oven_unlocks WHERE user_id = ? AND oven_index = ?",
+            (user_id, oven_index),
+        ) as cursor:
+            if await cursor.fetchone():
+                return "already"
+
+        charged = await shop.charge_balance(user_id, OVEN_UNLOCK_COST[oven_index])
+        if not charged:
+            return "not_enough"
+
+        await db.execute(
+            "INSERT OR IGNORE INTO bakery_oven_unlocks (user_id, oven_index) VALUES (?, ?)",
+            (user_id, oven_index),
+        )
+        await database.flush()
+
+    return "ok"
 
 
 async def _privilege_speedup_offset(user_id: int, duration_seconds: float) -> float:
@@ -1513,24 +1600,52 @@ async def reschedule_pending_bakes(bot: Bot) -> None:
 # ==========================
 
 def _build_bakery_view(
-    lang: str, ovens: list[aiosqlite.Row], pantry: dict[str, int]
+    lang: str,
+    ovens: list[aiosqlite.Row],
+    pantry: dict[str, int],
+    page: int,
+    unlocked_extra: set[int],
 ) -> tuple[str, object]:
     t = TEXTS[lang]
     now = time.time()
 
-    lines = [t["title"], t["separator"]]
-    builder = InlineKeyboardBuilder()
+    total_pages = (BAKERY_OVEN_COUNT + OVENS_PER_PAGE - 1) // OVENS_PER_PAGE
+    page = max(0, min(page, total_pages - 1))
+    start = page * OVENS_PER_PAGE
+    page_ovens = ovens[start:start + OVENS_PER_PAGE]
 
-    for oven in ovens:
+    title = t["title"]
+    if total_pages > 1:
+        title += t["title_page_suffix"].format(page=page + 1, total=total_pages)
+    lines = [title, t["separator"]]
+    builder = InlineKeyboardBuilder()
+    row_sizes = []
+
+    for oven in page_ovens:
+        oven_index = oven["oven_index"]
         recipe_id = oven["recipe_id"]
+
+        if not _is_oven_unlocked(oven_index, unlocked_extra):
+            # Платная печь, ещё не открытая — вместо выпечки показываем
+            # цену открытия (см. OVEN_UNLOCK_COST/unlock_oven).
+            lines.append(t["oven_locked_line"])
+            lines.append("")
+            builder.button(
+                text=t["unlock_oven_button"].format(cost=OVEN_UNLOCK_COST[oven_index]),
+                callback_data=f"bakery:unlock:{oven_index}",
+                style="primary",
+            )
+            row_sizes.append(1)
+            continue
 
         if recipe_id is None:
             builder.button(
                 text=t["oven_empty_button"],
-                callback_data=f"bakery:choose:{oven['oven_index']}",
+                callback_data=f"bakery:choose:{oven_index}",
                 style="primary",
                 icon_custom_emoji_id=BAKE_BUTTON_EMOJI_ID,
             )
+            row_sizes.append(1)
             continue
 
         recipe = RECIPES[recipe_id]
@@ -1549,10 +1664,33 @@ def _build_bakery_view(
         )
         builder.button(
             text=t["oven_button_baking"].format(emoji=recipe["emoji"], percent=percent),
-            callback_data=f"bakery:info:{oven['oven_index']}",
+            callback_data=f"bakery:info:{oven_index}",
             style="primary",
         )
+        row_sizes.append(1)
         lines.append("")
+
+    # Навигация по страницам печей — показывается, только если страниц
+    # больше одной (см. _build_recipe_choice — тот же паттерн).
+    nav_count = 0
+    if page > 0:
+        builder.button(
+            text=t["page_prev_button"],
+            callback_data=f"bakery:ovenpage:{page - 1}",
+            style="primary",
+            icon_custom_emoji_id=PAGE_PREV_EMOJI_ID,
+        )
+        nav_count += 1
+    if page < total_pages - 1:
+        builder.button(
+            text=t["page_next_button"],
+            callback_data=f"bakery:ovenpage:{page + 1}",
+            style="primary",
+            icon_custom_emoji_id=PAGE_NEXT_EMOJI_ID,
+        )
+        nav_count += 1
+    if nav_count:
+        row_sizes.append(nav_count)
 
     lines.append(t["showcase_title"])
     if pantry:
@@ -1574,7 +1712,8 @@ def _build_bakery_view(
         style="primary",
         icon_custom_emoji_id=SHOP_BUTTON_EMOJI_ID,
     )
-    builder.adjust(1)
+    row_sizes.append(1)
+    builder.adjust(*row_sizes)
     return text, builder.as_markup()
 
 
@@ -1633,7 +1772,7 @@ def _build_recipe_choice(lang: str, oven_index: int, page: int = 0) -> tuple[str
 
     builder.button(
         text=t["back_button"],
-        callback_data="bakery:back",
+        callback_data=f"bakery:back:{oven_index // OVENS_PER_PAGE}",
         style="primary",
         icon_custom_emoji_id=BACK_BUTTON_EMOJI_ID,
     )
@@ -1671,7 +1810,7 @@ def _build_shop_view(lang: str, balance: int, ingredients_inv: dict[str, int]) -
 
     builder.button(
         text=t["back_button"],
-        callback_data="bakery:back",
+        callback_data="bakery:back:0",
         style="primary",
         icon_custom_emoji_id=BACK_BUTTON_EMOJI_ID,
     )
@@ -1731,11 +1870,12 @@ async def _get_lang(state: FSMContext, user_id: int) -> str:
     return lang
 
 
-async def _render_and_send(message_or_callback, lang: str, edit: bool = False) -> None:
+async def _render_and_send(message_or_callback, lang: str, edit: bool = False, page: int = 0) -> None:
     user_id = message_or_callback.from_user.id
     ovens = await _get_ovens(user_id)
     pantry = await get_pantry(user_id)
-    text, markup = _build_bakery_view(lang, ovens, pantry)
+    unlocked_extra = await _get_unlocked_extra_ovens(user_id)
+    text, markup = _build_bakery_view(lang, ovens, pantry, page, unlocked_extra)
 
     # Картинка раздела (см. admin.py: admin:sections, ключ "bakery") —
     # если задана, экран пекарни отправляется/правится как фото с
@@ -1777,17 +1917,54 @@ async def open_bakery(message: Message, state: FSMContext) -> None:
     await _render_and_send(message, lang, edit=False)
 
 
-@router.callback_query(F.data == "bakery:back")
+@router.callback_query(F.data.startswith("bakery:back:"))
 async def on_back_to_bakery(callback: CallbackQuery, state: FSMContext) -> None:
     lang = await _get_lang(state, callback.from_user.id)
-    await _render_and_send(callback, lang, edit=True)
+    page = int(callback.data.split(":")[2])
+    await _render_and_send(callback, lang, edit=True, page=page)
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("bakery:ovenpage:"))
+async def on_oven_page(callback: CallbackQuery, state: FSMContext) -> None:
+    lang = await _get_lang(state, callback.from_user.id)
+    page = int(callback.data.split(":")[2])
+    await _render_and_send(callback, lang, edit=True, page=page)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("bakery:unlock:"))
+async def on_unlock_oven(callback: CallbackQuery, state: FSMContext) -> None:
+    lang = await _get_lang(state, callback.from_user.id)
+    t = TEXTS[lang]
+    oven_index = int(callback.data.split(":")[2])
+
+    status = await unlock_oven(callback.from_user.id, oven_index)
+    if status == "not_enough":
+        await callback.answer(t["unlock_oven_not_enough_toast"], show_alert=True)
+        return
+    if status == "already":
+        await callback.answer(t["unlock_oven_already_toast"])
+    elif status == "ok":
+        await callback.answer(t["unlocked_oven_toast"], show_alert=True)
+    else:
+        await callback.answer()
+        return
+
+    await _render_and_send(callback, lang, edit=True, page=oven_index // OVENS_PER_PAGE)
 
 
 @router.callback_query(F.data.startswith("bakery:choose:"))
 async def on_choose_recipe(callback: CallbackQuery, state: FSMContext) -> None:
     lang = await _get_lang(state, callback.from_user.id)
     oven_index = int(callback.data.split(":")[2])
+
+    # Подстраховка от протухшей клавиатуры: если печь платная и ещё не
+    # открыта, печь в ней нельзя — экран выбора рецепта не открываем.
+    unlocked_extra = await _get_unlocked_extra_ovens(callback.from_user.id)
+    if not _is_oven_unlocked(oven_index, unlocked_extra):
+        await callback.answer()
+        return
 
     text, markup = _build_recipe_choice(lang, oven_index, page=0)
 
@@ -1853,6 +2030,12 @@ async def on_bake(callback: CallbackQuery, state: FSMContext) -> None:
     oven_index = int(oven_index_str)
     recipe = RECIPES[recipe_id]
 
+    # Подстраховка от протухшей клавиатуры — см. on_choose_recipe.
+    unlocked_extra = await _get_unlocked_extra_ovens(callback.from_user.id)
+    if not _is_oven_unlocked(oven_index, unlocked_extra):
+        await callback.answer()
+        return
+
     result = await start_baking(callback.from_user.id, oven_index, recipe_id, lang)
 
     if result is None:
@@ -1873,7 +2056,7 @@ async def on_bake(callback: CallbackQuery, state: FSMContext) -> None:
         ),
         show_alert=True,
     )
-    await _render_and_send(callback, lang, edit=True)
+    await _render_and_send(callback, lang, edit=True, page=oven_index // OVENS_PER_PAGE)
 
 
 @router.callback_query(F.data.startswith("bakery:feed:"))
