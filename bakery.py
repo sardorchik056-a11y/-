@@ -481,6 +481,7 @@ BUTTON_TEXT = {
 # используется параметр icon_custom_emoji_id.
 SHOP_BUTTON_EMOJI_ID = "6010183144450299916"   # 🏠 Лавка
 BAKE_BUTTON_EMOJI_ID = "5424972470023104089"   # 🔥 Испечь
+OVEN_LOCK_EMOJI_ID = "5296369303661067030"   # 🔒 Печь закрыта / открыть печь
 COIN_BUTTON_EMOJI_ID = "5449418135381759397"   # 🪙 монета (цена в кнопках лавки)
 QTY_CUSTOM_BUTTON_EMOJI_ID = "5370951118698339120"   # ✏️ Своё количество
 BACK_BUTTON_EMOJI_ID = "6039539366177541657"   # ⬅️ Назад
@@ -537,8 +538,8 @@ TEXTS = {
         "not_enough_pn_toast": "Не хватает Pn для покупки.",
         # --- пагинация печей / открытие платных печей ---
         "title_page_suffix": " <i>(стр. {page}/{total})</i>",
-        "oven_locked_line": "🔒 <i>Печь закрыта</i>",
-        "unlock_oven_button": f"🔓 Открыть — {{cost}} {shop.CURRENCY_PLAIN}",
+        "oven_locked_line": f'<tg-emoji emoji-id="5296369303661067030">🔒</tg-emoji> <i>Печь закрыта</i>',
+        "unlock_oven_button": "Открыть — {cost}",
         "unlocked_oven_toast": "🔥 Открыта новая печь!",
         "unlock_oven_not_enough_toast": f"Не хватает {shop.CURRENCY_PLAIN} для этой покупки.",
         "unlock_oven_already_toast": "Эта печь уже открыта.",
@@ -583,6 +584,13 @@ TEXTS = {
         "qty_invalid": "Enter a whole number from 1 to {max}.",
         "bought_toast": f"Bought: {{emoji}} {{name}} ×{{count}} for {{total}} {shop.CURRENCY_PLAIN}",
         "not_enough_pn_toast": "Not enough Pn for this purchase.",
+        # --- oven pagination / unlocking paid ovens ---
+        "title_page_suffix": " <i>(page {page}/{total})</i>",
+        "oven_locked_line": f'<tg-emoji emoji-id="5296369303661067030">🔒</tg-emoji> <i>Oven locked</i>',
+        "unlock_oven_button": "Unlock — {cost}",
+        "unlocked_oven_toast": "🔥 A new oven is unlocked!",
+        "unlock_oven_not_enough_toast": f"Not enough {shop.CURRENCY_PLAIN} for this purchase.",
+        "unlock_oven_already_toast": "This oven is already unlocked.",
     },
 }
 
@@ -1634,6 +1642,7 @@ def _build_bakery_view(
                 text=t["unlock_oven_button"].format(cost=OVEN_UNLOCK_COST[oven_index]),
                 callback_data=f"bakery:unlock:{oven_index}",
                 style="primary",
+                icon_custom_emoji_id=OVEN_LOCK_EMOJI_ID,
             )
             row_sizes.append(1)
             continue
