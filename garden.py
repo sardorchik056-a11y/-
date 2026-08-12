@@ -117,6 +117,11 @@ PLOT_UNLOCK_COST = {
     5: 50000,
 }
 
+# Кастомный премиум-эмодзи "замок" — для кнопки открытия платной
+# грядки и для пометки "Грядка закрыта" в тексте (см. bakery.py:
+# аналогичные *_EMOJI_ID константы, тот же приём).
+PLOT_LOCK_EMOJI_ID = "5296369303661067030"
+
 # Пороги общего счётчика собранных фруктов (см. _bump_harvest_count) —
 # garden_harvest_10/100/1000/10000.
 _TOTAL_HARVEST_THRESHOLDS = [
@@ -276,8 +281,8 @@ TEXTS = {
         "time_min_sec": "{minutes} мин {seconds} сек",
         "time_sec": "{seconds} сек",
         "title_page_suffix": " <i>(стр. {page}/{total})</i>",
-        "plot_locked_line": "🔒 <i>Грядка закрыта</i>",
-        "unlock_button": "🔓 Открыть — {cost} 🪙",
+        "plot_locked_line": f'<tg-emoji emoji-id="5296369303661067030">🔒</tg-emoji> <i>Грядка закрыта</i>',
+        "unlock_button": "Открыть — {cost}",
         "unlocked_toast": "🌱 Открыта новая грядка!",
         "unlock_not_enough_toast": "Не хватает монет, чтобы открыть эту грядку.",
         "unlock_already_toast": "Эта грядка уже открыта.",
@@ -304,8 +309,8 @@ TEXTS = {
         "time_min_sec": "{minutes}m {seconds}s",
         "time_sec": "{seconds}s",
         "title_page_suffix": " <i>(page {page}/{total})</i>",
-        "plot_locked_line": "🔒 <i>Plot locked</i>",
-        "unlock_button": "🔓 Unlock — {cost} 🪙",
+        "plot_locked_line": f'<tg-emoji emoji-id="5296369303661067030">🔒</tg-emoji> <i>Plot locked</i>',
+        "unlock_button": "Unlock — {cost}",
         "unlocked_toast": "🌱 A new plot is unlocked!",
         "unlock_not_enough_toast": "Not enough coins to unlock this plot.",
         "unlock_already_toast": "This plot is already unlocked.",
@@ -1113,6 +1118,7 @@ def _build_garden_view(
                 text=t["unlock_button"].format(cost=PLOT_UNLOCK_COST[plot_index]),
                 callback_data=f"garden:unlock:{plot_index}",
                 style="primary",
+                icon_custom_emoji_id=PLOT_LOCK_EMOJI_ID,
             )
             row_sizes.append(1)
             continue
