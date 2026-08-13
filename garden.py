@@ -129,6 +129,9 @@ PLOT_LOCK_EMOJI_ID = "5296369303661067030"
 PAGE_PREV_EMOJI_ID = "5255703720078879038"   # 🔙
 PAGE_NEXT_EMOJI_ID = "5253767677670862169"   # 🔜
 
+# Кастомный премиум-эмодзи "🔼" — для кнопки улучшения грядки.
+PLOT_UPGRADE_EMOJI_ID = "5449683594425410231"
+
 
 # ==========================
 #   УЛУЧШЕНИЕ ГРЯДОК
@@ -176,6 +179,12 @@ def _plot_time_factor(level: int) -> float:
     level = max(1, min(PLOT_UPGRADE_MAX_LEVEL, level))
     min_factor = 1 / PLOT_UPGRADE_MAX_SPEEDUP
     return 1 - (level - 1) * (1 - min_factor) / (PLOT_UPGRADE_MAX_LEVEL - 1)
+
+
+def _plot_speedup_percent(level: int) -> int:
+    """На сколько % сократилось время роста на уровне level относительно
+    базового (уровень 1) — для тоста после улучшения (см. on_upgrade_plot)."""
+    return round((1 - _plot_time_factor(level)) * 100)
 
 
 def _effective_grow_seconds(crop_id: str, level: int) -> float:
@@ -354,7 +363,7 @@ TEXTS = {
         "upgrade_not_enough_toast": "Не хватает монет для улучшения грядки.",
         "upgrade_busy_toast": "Нельзя улучшать грядку, пока на ней что-то растёт.",
         "upgrade_max_toast": "Эта грядка уже улучшена до максимума.",
-        "upgrade_done_toast": "🔧 Грядка улучшена до {level} уровня! Выращивание стало быстрее.",
+        "upgrade_done_toast": "🔧 Грядка улучшена до {level} уровня! Время выращивания сокращено на {percent}%.",
     },
     "en": {
         "title": "🌿 <b>Garden</b>",
@@ -388,7 +397,7 @@ TEXTS = {
         "upgrade_not_enough_toast": "Not enough coins to upgrade this plot.",
         "upgrade_busy_toast": "Can't upgrade a plot while something is growing on it.",
         "upgrade_max_toast": "This plot is already at max level.",
-        "upgrade_done_toast": "🔧 Plot upgraded to level {level}! Growing is faster now.",
+        "upgrade_done_toast": "🔧 Plot upgraded to level {level}! Growing time reduced by {percent}%.",
     },
 }
 
@@ -1325,6 +1334,7 @@ def _build_garden_view(
                     text=t["upgrade_button"].format(cost=PLOT_UPGRADE_COST[level + 1]),
                     callback_data=f"garden:upgrade:{plot_index}",
                     style="primary",
+                    icon_custom_emoji_id=PLOT_UPGRADE_EMOJI_ID,
                 )
                 row_sizes.append(2)
             else:
@@ -1361,6 +1371,7 @@ def _build_garden_view(
                 text=t["upgrade_button"].format(cost=PLOT_UPGRADE_COST[level + 1]),
                 callback_data=f"garden:upgrade:{plot_index}",
                 style="primary",
+                icon_custom_emoji_id=PLOT_UPGRADE_EMOJI_ID,
             )
             row_sizes.append(2)
         else:
@@ -1591,7 +1602,10 @@ async def on_upgrade_plot(callback: CallbackQuery, state: FSMContext) -> None:
         return
 
     new_level = await _get_single_plot_level(callback.from_user.id, plot_index)
-    await callback.answer(t["upgrade_done_toast"].format(level=new_level), show_alert=True)
+    percent = _plot_speedup_percent(new_level)
+    await callback.answer(
+        t["upgrade_done_toast"].format(level=new_level, percent=percent), show_alert=True
+    )
     await _render_and_send(callback, lang, edit=True, page=plot_index // PLOTS_PER_PAGE)
 
 
