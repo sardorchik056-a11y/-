@@ -122,6 +122,56 @@ OVEN_UNLOCK_COST = {
     3: 85000,
 }
 
+
+# ==========================
+#   УЛУЧШЕНИЕ ПЕЧЕЙ
+# ==========================
+# По аналогии с улучшением грядок в garden.py (см. там же докстринг
+# раздела "УЛУЧШЕНИЕ ГРЯДОК" — тот же принцип один в один): у каждой
+# печи есть уровень от 1 до OVEN_UPGRADE_MAX_LEVEL, хранится в
+# bakery_oven_levels (заводится лениво в ensure_achv_tables ниже),
+# отсутствие строки = уровень 1. Каждый уровень сверх первого сокращает
+# время выпечки ЛЮБОГО рецепта именно в этой печи — линейно, поровну на
+# уровень, так что к 10 уровню суммарное ускорение ровно
+# OVEN_UPGRADE_MAX_SPEEDUP (см. _oven_time_factor). Улучшать можно
+# только пустую печь — та же причина, что и у грядок (не пересчитывать
+# задним числом уже тикающий таймер и не переставлять фоновую задачу).
+OVEN_UPGRADE_MAX_LEVEL = 10
+
+# Максимальное ускорение на 10 уровне: время выпечки сокращается не
+# более чем в 4 раза (т.е. становится 25% от базового).
+OVEN_UPGRADE_MAX_SPEEDUP = 4.0
+
+# Стоимость перехода НА уровень N (ключ — целевой уровень 2..10) в Pn.
+# Геометрическая прогрессия от 5000 (2 уровень) до 250000 (10 уровень).
+OVEN_UPGRADE_COST = {
+    2: 5000,
+    3: 8200,
+    4: 13300,
+    5: 21700,
+    6: 35400,
+    7: 57700,
+    8: 94000,
+    9: 153300,
+    10: 250000,
+}
+
+
+def _oven_time_factor(level: int) -> float:
+    """Множитель к времени выпечки для уровня печи level: 1.0 на уровне 1
+    (без ускорения), линейно убывает до 1/OVEN_UPGRADE_MAX_SPEEDUP на
+    уровне OVEN_UPGRADE_MAX_LEVEL (см. докстринг раздела выше)."""
+    level = max(1, min(OVEN_UPGRADE_MAX_LEVEL, level))
+    min_factor = 1 / OVEN_UPGRADE_MAX_SPEEDUP
+    return 1 - (level - 1) * (1 - min_factor) / (OVEN_UPGRADE_MAX_LEVEL - 1)
+
+
+def _effective_bake_seconds(recipe_id: str, level: int) -> float:
+    """Время выпечки recipe_id в печи уровня level, с учётом ускорения
+    от уровня печи (см. _oven_time_factor)."""
+    return RECIPES[recipe_id]["bake_seconds"] * _oven_time_factor(level)
+
+
 BAR_LENGTH = 10
 BAR_FILLED = "▰"
 BAR_EMPTY = "▱"
@@ -543,6 +593,13 @@ TEXTS = {
         "unlocked_oven_toast": "🔥 Открыта новая печь!",
         "unlock_oven_not_enough_toast": f"Не хватает {shop.CURRENCY_PLAIN} для этой покупки.",
         "unlock_oven_already_toast": "Эта печь уже открыта.",
+        # --- улучшение печей ---
+        "upgrade_oven_button": "🔧 Улучшить — {cost}",
+        "oven_level_line": "<i>🔧 Уровень: {level}/{max_level}</i>",
+        "upgrade_oven_not_enough_toast": f"Не хватает {shop.CURRENCY_PLAIN} для улучшения печи.",
+        "upgrade_oven_busy_toast": "Нельзя улучшать печь, пока в ней что-то готовится.",
+        "upgrade_oven_max_toast": "Эта печь уже улучшена до максимума.",
+        "upgrade_oven_done_toast": "🔧 Печь улучшена до {level} уровня! Выпечка стала быстрее.",
     },
     "en": {
         "title": "🥐 <b>Bakery</b>",
@@ -591,6 +648,13 @@ TEXTS = {
         "unlocked_oven_toast": "🔥 A new oven is unlocked!",
         "unlock_oven_not_enough_toast": f"Not enough {shop.CURRENCY_PLAIN} for this purchase.",
         "unlock_oven_already_toast": "This oven is already unlocked.",
+        # --- oven upgrades ---
+        "upgrade_oven_button": "🔧 Upgrade — {cost}",
+        "oven_level_line": "<i>🔧 Level: {level}/{max_level}</i>",
+        "upgrade_oven_not_enough_toast": f"Not enough {shop.CURRENCY_PLAIN} to upgrade this oven.",
+        "upgrade_oven_busy_toast": "Can't upgrade an oven while something is baking in it.",
+        "upgrade_oven_max_toast": "This oven is already at max level.",
+        "upgrade_oven_done_toast": "🔧 Oven upgraded to level {level}! Baking is faster now.",
     },
 }
 
@@ -840,6 +904,18 @@ async def ensure_achv_tables() -> None:
         CREATE TABLE IF NOT EXISTS bakery_oven_unlocks (
             user_id INTEGER NOT NULL,
             oven_index INTEGER NOT NULL,
+            PRIMARY KEY (user_id, oven_index)
+        )
+        """
+    )
+    # Уровни улучшения печей (см. OVEN_UPGRADE_COST/upgrade_oven выше) —
+    # отсутствие строки означает уровень 1 (не улучшалась).
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS bakery_oven_levels (
+            user_id INTEGER NOT NULL,
+            oven_index INTEGER NOT NULL,
+            level INTEGER NOT NULL DEFAULT 1,
             PRIMARY KEY (user_id, oven_index)
         )
         """
@@ -1312,6 +1388,76 @@ async def unlock_oven(user_id: int, oven_index: int) -> str:
     return "ok"
 
 
+async def _get_oven_levels(user_id: int) -> dict[int, int]:
+    """Индекс печи -> её текущий уровень улучшения (см. OVEN_UPGRADE_COST/
+    upgrade_oven). Печей без строки в bakery_oven_levels (никогда не
+    улучшались) в словаре нет — см. _oven_level, которая для них
+    возвращает уровень 1 по умолчанию."""
+    db = await database.get_db()
+    async with db.execute(
+        "SELECT oven_index, level FROM bakery_oven_levels WHERE user_id = ?", (user_id,)
+    ) as cursor:
+        return {row["oven_index"]: row["level"] async for row in cursor}
+
+
+def _oven_level(levels: dict[int, int], oven_index: int) -> int:
+    return levels.get(oven_index, 1)
+
+
+async def _get_single_oven_level(user_id: int, oven_index: int) -> int:
+    db = await database.get_db()
+    async with db.execute(
+        "SELECT level FROM bakery_oven_levels WHERE user_id = ? AND oven_index = ?",
+        (user_id, oven_index),
+    ) as cursor:
+        row = await cursor.fetchone()
+    return row["level"] if row else 1
+
+
+async def upgrade_oven(user_id: int, oven_index: int) -> str:
+    """Повышает уровень печи oven_index на 1 (см. OVEN_UPGRADE_COST/
+    OVEN_UPGRADE_MAX_LEVEL). Тот же паттерн, что и unlock_oven/upgrade_plot
+    в garden.py. Возвращает:
+      "ok"          — улучшено прямо сейчас
+      "busy"        — в печи сейчас что-то готовится, улучшать нельзя
+      "max_level"   — уже максимальный уровень
+      "not_enough"  — не хватило монет (ничего не списано)"""
+    async with database.user_lock(user_id):
+        db = await database.get_db()
+        async with db.execute(
+            "SELECT recipe_id FROM bakery_ovens WHERE user_id = ? AND oven_index = ?",
+            (user_id, oven_index),
+        ) as cursor:
+            oven_row = await cursor.fetchone()
+        if oven_row is not None and oven_row["recipe_id"] is not None:
+            return "busy"
+
+        async with db.execute(
+            "SELECT level FROM bakery_oven_levels WHERE user_id = ? AND oven_index = ?",
+            (user_id, oven_index),
+        ) as cursor:
+            level_row = await cursor.fetchone()
+        current_level = level_row["level"] if level_row else 1
+        if current_level >= OVEN_UPGRADE_MAX_LEVEL:
+            return "max_level"
+
+        next_level = current_level + 1
+        charged = await shop.charge_balance(user_id, OVEN_UPGRADE_COST[next_level])
+        if not charged:
+            return "not_enough"
+
+        await db.execute(
+            """
+            INSERT INTO bakery_oven_levels (user_id, oven_index, level) VALUES (?, ?, ?)
+            ON CONFLICT (user_id, oven_index) DO UPDATE SET level = excluded.level
+            """,
+            (user_id, oven_index, next_level),
+        )
+        await database.flush()
+
+    return "ok"
+
+
 async def _privilege_speedup_offset(user_id: int, duration_seconds: float) -> float:
     """Сколько секунд отнять от времени старта выпечки, если у игрока
     активна привилегия с ускорением (donate.py: PRIVILEGE_TIERS,
@@ -1343,11 +1489,17 @@ async def start_baking(user_id: int, oven_index: int, recipe_id: str, lang: str)
     только когда точно хватает всего — списываем и ставим печься.
     Так рецепт либо применяется целиком, либо не трогает вообще ничего.
 
+    Время выпечки берётся с поправкой на уровень печи (см.
+    _effective_bake_seconds/OVEN_UPGRADE_COST) — чем выше уровень, тем
+    короче базовое время ДО применения ускорения от привилегии ниже.
+
     Если у игрока активна привилегия с ускорением роста — возвращаемый
     started_at "задним числом" сдвинут в прошлое на её speedup_percent
     от полного времени выпечки (см. _privilege_speedup_offset)."""
     recipe = RECIPES[recipe_id]
-    speedup_offset = await _privilege_speedup_offset(user_id, recipe["bake_seconds"])
+    level = await _get_single_oven_level(user_id, oven_index)
+    bake_seconds = _effective_bake_seconds(recipe_id, level)
+    speedup_offset = await _privilege_speedup_offset(user_id, bake_seconds)
 
     async with database.user_lock(user_id):
         db = await database.get_db()
@@ -1508,9 +1660,14 @@ async def _auto_collect_ready(user_id: int) -> None:
     ) as cursor:
         rows = await cursor.fetchall()
 
+    # Уровень печи не меняется, пока в ней что-то печётся (upgrade_oven
+    # запрещает улучшение занятой печи), так что текущий уровень — тот
+    # же, что был в момент старта выпечки, и его безопасно использовать.
+    levels = await _get_oven_levels(user_id)
+
     for row in rows:
         recipe_id = row["recipe_id"]
-        bake_seconds = RECIPES[recipe_id]["bake_seconds"]
+        bake_seconds = _effective_bake_seconds(recipe_id, _oven_level(levels, row["oven_index"]))
         if now - row["started_at"] >= bake_seconds:
             await _collect_oven_if_matches(user_id, row["oven_index"], recipe_id, row["started_at"])
 
@@ -1523,11 +1680,13 @@ _background_tasks: set[asyncio.Task] = set()
 
 
 def _schedule_auto_bake(
-    bot: Bot, user_id: int, oven_index: int, recipe_id: str, started_at: float, lang: str
+    bot: Bot, user_id: int, oven_index: int, recipe_id: str, started_at: float, lang: str, level: int = 1
 ) -> None:
     """Создаёт фоновую задачу: как только выпечка будет готова, она сама
-    переместится на витрину, а игроку придёт уведомление."""
-    bake_seconds = RECIPES[recipe_id]["bake_seconds"]
+    переместится на витрину, а игроку придёт уведомление. level — уровень
+    печи НА МОМЕНТ СТАРТА выпечки (см. _effective_bake_seconds) — см.
+    аналогичный комментарий в garden._schedule_auto_harvest."""
+    bake_seconds = _effective_bake_seconds(recipe_id, level)
     delay = max(0.0, bake_seconds - (time.time() - started_at))
 
     task = asyncio.create_task(
@@ -1593,6 +1752,7 @@ async def reschedule_pending_bakes(bot: Bot) -> None:
         rows = await cursor.fetchall()
 
     for row in rows:
+        level = await _get_single_oven_level(row["user_id"], row["oven_index"])
         _schedule_auto_bake(
             bot,
             row["user_id"],
@@ -1600,6 +1760,7 @@ async def reschedule_pending_bakes(bot: Bot) -> None:
             row["recipe_id"],
             row["started_at"],
             row["lang"] or "ru",
+            level,
         )
 
 
@@ -1613,6 +1774,7 @@ def _build_bakery_view(
     pantry: dict[str, int],
     page: int,
     unlocked_extra: set[int],
+    levels: dict[int, int],
 ) -> tuple[str, object]:
     t = TEXTS[lang]
     now = time.time()
@@ -1647,19 +1809,38 @@ def _build_bakery_view(
             row_sizes.append(1)
             continue
 
+        level = _oven_level(levels, oven_index)
+        # Кнопка "Улучшить" показывается парой с основной кнопкой печи
+        # (испечь/готовится), пока печь не достигла максимального уровня —
+        # см. OVEN_UPGRADE_MAX_LEVEL/upgrade_oven.
+        can_upgrade = level < OVEN_UPGRADE_MAX_LEVEL
+
         if recipe_id is None:
+            if level > 1:
+                lines.append(
+                    t["oven_level_line"].format(level=level, max_level=OVEN_UPGRADE_MAX_LEVEL)
+                )
+                lines.append("")
             builder.button(
                 text=t["oven_empty_button"],
                 callback_data=f"bakery:choose:{oven_index}",
                 style="primary",
                 icon_custom_emoji_id=BAKE_BUTTON_EMOJI_ID,
             )
-            row_sizes.append(1)
+            if can_upgrade:
+                builder.button(
+                    text=t["upgrade_oven_button"].format(cost=OVEN_UPGRADE_COST[level + 1]),
+                    callback_data=f"bakery:upgrade:{oven_index}",
+                    style="primary",
+                )
+                row_sizes.append(2)
+            else:
+                row_sizes.append(1)
             continue
 
         recipe = RECIPES[recipe_id]
         elapsed = now - oven["started_at"]
-        bake_seconds = recipe["bake_seconds"]
+        bake_seconds = _effective_bake_seconds(recipe_id, level)
         percent = round(elapsed / bake_seconds * 100)
         remaining = bake_seconds - elapsed
 
@@ -1671,12 +1852,24 @@ def _build_bakery_view(
                 time=_format_duration(remaining, lang),
             )
         )
+        if level > 1:
+            lines.append(
+                t["oven_level_line"].format(level=level, max_level=OVEN_UPGRADE_MAX_LEVEL)
+            )
         builder.button(
             text=t["oven_button_baking"].format(emoji=recipe["emoji"], percent=percent),
             callback_data=f"bakery:info:{oven_index}",
             style="primary",
         )
-        row_sizes.append(1)
+        if can_upgrade:
+            builder.button(
+                text=t["upgrade_oven_button"].format(cost=OVEN_UPGRADE_COST[level + 1]),
+                callback_data=f"bakery:upgrade:{oven_index}",
+                style="primary",
+            )
+            row_sizes.append(2)
+        else:
+            row_sizes.append(1)
         lines.append("")
 
     # Навигация по страницам печей — показывается, только если страниц
@@ -1726,7 +1919,7 @@ def _build_bakery_view(
     return text, builder.as_markup()
 
 
-def _build_recipe_choice(lang: str, oven_index: int, page: int = 0) -> tuple[str, object]:
+def _build_recipe_choice(lang: str, oven_index: int, level: int, page: int = 0) -> tuple[str, object]:
     t = TEXTS[lang]
 
     total_pages = (len(RECIPE_ORDER) + RECIPES_PER_PAGE - 1) // RECIPES_PER_PAGE
@@ -1745,7 +1938,10 @@ def _build_recipe_choice(lang: str, oven_index: int, page: int = 0) -> tuple[str
             t["recipe_line"].format(
                 emoji=recipe["emoji"],
                 name=recipe["name"][lang],
-                time=_format_duration(recipe["bake_seconds"], lang),
+                # Время уже с поправкой на уровень этой печи (см.
+                # _effective_bake_seconds) — чтобы игрок видел реальное
+                # время ДО начала выпечки, а не базовое время рецепта.
+                time=_format_duration(_effective_bake_seconds(recipe_id, level), lang),
                 ingredients_line=_format_recipe_requirements(lang, recipe),
             )
         )
@@ -1884,7 +2080,8 @@ async def _render_and_send(message_or_callback, lang: str, edit: bool = False, p
     ovens = await _get_ovens(user_id)
     pantry = await get_pantry(user_id)
     unlocked_extra = await _get_unlocked_extra_ovens(user_id)
-    text, markup = _build_bakery_view(lang, ovens, pantry, page, unlocked_extra)
+    levels = await _get_oven_levels(user_id)
+    text, markup = _build_bakery_view(lang, ovens, pantry, page, unlocked_extra, levels)
 
     # Картинка раздела (см. admin.py: admin:sections, ключ "bakery") —
     # если задана, экран пекарни отправляется/правится как фото с
@@ -1963,6 +2160,34 @@ async def on_unlock_oven(callback: CallbackQuery, state: FSMContext) -> None:
     await _render_and_send(callback, lang, edit=True, page=oven_index // OVENS_PER_PAGE)
 
 
+@router.callback_query(F.data.startswith("bakery:upgrade:"))
+async def on_upgrade_oven(callback: CallbackQuery, state: FSMContext) -> None:
+    lang = await _get_lang(state, callback.from_user.id)
+    t = TEXTS[lang]
+    oven_index = int(callback.data.split(":")[2])
+
+    # Подстраховка от протухшей клавиатуры — см. on_choose_recipe.
+    unlocked_extra = await _get_unlocked_extra_ovens(callback.from_user.id)
+    if not _is_oven_unlocked(oven_index, unlocked_extra):
+        await callback.answer()
+        return
+
+    status = await upgrade_oven(callback.from_user.id, oven_index)
+    if status == "not_enough":
+        await callback.answer(t["upgrade_oven_not_enough_toast"], show_alert=True)
+        return
+    if status == "busy":
+        await callback.answer(t["upgrade_oven_busy_toast"], show_alert=True)
+        return
+    if status == "max_level":
+        await callback.answer(t["upgrade_oven_max_toast"], show_alert=True)
+        return
+
+    new_level = await _get_single_oven_level(callback.from_user.id, oven_index)
+    await callback.answer(t["upgrade_oven_done_toast"].format(level=new_level), show_alert=True)
+    await _render_and_send(callback, lang, edit=True, page=oven_index // OVENS_PER_PAGE)
+
+
 @router.callback_query(F.data.startswith("bakery:choose:"))
 async def on_choose_recipe(callback: CallbackQuery, state: FSMContext) -> None:
     lang = await _get_lang(state, callback.from_user.id)
@@ -1975,7 +2200,8 @@ async def on_choose_recipe(callback: CallbackQuery, state: FSMContext) -> None:
         await callback.answer()
         return
 
-    text, markup = _build_recipe_choice(lang, oven_index, page=0)
+    level = await _get_single_oven_level(callback.from_user.id, oven_index)
+    text, markup = _build_recipe_choice(lang, oven_index, level, page=0)
 
     import admin
 
@@ -1990,7 +2216,8 @@ async def on_recipe_page(callback: CallbackQuery, state: FSMContext) -> None:
     oven_index = int(oven_index_str)
     page = int(page_str)
 
-    text, markup = _build_recipe_choice(lang, oven_index, page=page)
+    level = await _get_single_oven_level(callback.from_user.id, oven_index)
+    text, markup = _build_recipe_choice(lang, oven_index, level, page=page)
 
     import admin
 
@@ -2012,9 +2239,10 @@ async def on_oven_info(callback: CallbackQuery, state: FSMContext) -> None:
         return
 
     recipe = RECIPES[oven["recipe_id"]]
+    level = await _get_single_oven_level(callback.from_user.id, oven_index)
     now = time.time()
     elapsed = now - oven["started_at"]
-    bake_seconds = recipe["bake_seconds"]
+    bake_seconds = _effective_bake_seconds(oven["recipe_id"], level)
     percent = round(elapsed / bake_seconds * 100)
     remaining = bake_seconds - elapsed
 
@@ -2045,6 +2273,8 @@ async def on_bake(callback: CallbackQuery, state: FSMContext) -> None:
         await callback.answer()
         return
 
+    level = await _get_single_oven_level(callback.from_user.id, oven_index)
+
     result = await start_baking(callback.from_user.id, oven_index, recipe_id, lang)
 
     if result is None:
@@ -2055,13 +2285,14 @@ async def on_bake(callback: CallbackQuery, state: FSMContext) -> None:
         return
 
     started_at = result
-    _schedule_auto_bake(callback.bot, callback.from_user.id, oven_index, recipe_id, started_at, lang)
+    _schedule_auto_bake(callback.bot, callback.from_user.id, oven_index, recipe_id, started_at, lang, level)
 
+    bake_seconds = _effective_bake_seconds(recipe_id, level)
     await callback.answer(
         t["baking_started_toast"].format(
             emoji=recipe["emoji"],
             name=recipe["name"][lang],
-            time=_format_duration(max(0.0, recipe["bake_seconds"] - (time.time() - started_at)), lang),
+            time=_format_duration(max(0.0, bake_seconds - (time.time() - started_at)), lang),
         ),
         show_alert=True,
     )
