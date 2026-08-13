@@ -45,6 +45,7 @@ from aiogram.types import CallbackQuery, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 import database
+import garden
 
 router = Router(name="shop")
 
