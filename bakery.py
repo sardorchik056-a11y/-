@@ -166,6 +166,12 @@ def _oven_time_factor(level: int) -> float:
     return 1 - (level - 1) * (1 - min_factor) / (OVEN_UPGRADE_MAX_LEVEL - 1)
 
 
+def _oven_speedup_percent(level: int) -> int:
+    """На сколько % сократилось время выпечки на уровне level относительно
+    базового (уровень 1) — для тоста после улучшения (см. on_upgrade_oven)."""
+    return round((1 - _oven_time_factor(level)) * 100)
+
+
 def _effective_bake_seconds(recipe_id: str, level: int) -> float:
     """Время выпечки recipe_id в печи уровня level, с учётом ускорения
     от уровня печи (см. _oven_time_factor)."""
@@ -537,6 +543,7 @@ QTY_CUSTOM_BUTTON_EMOJI_ID = "5370951118698339120"   # ✏️ Своё коли�
 BACK_BUTTON_EMOJI_ID = "6039539366177541657"   # ⬅️ Назад
 PAGE_PREV_EMOJI_ID = "5255703720078879038"   # 🔙 Пред. (пагинация рецептов)
 PAGE_NEXT_EMOJI_ID = "5253767677670862169"   # 🔜 След. (пагинация рецептов)
+OVEN_UPGRADE_EMOJI_ID = "5449683594425410231"   # 🔼 Улучшить печь
 
 # Для текста (не кнопки) кастомный эмодзи вставляется HTML-тегом
 # <tg-emoji>, а не icon_custom_emoji_id — используется в заголовке лавки.
@@ -599,7 +606,7 @@ TEXTS = {
         "upgrade_oven_not_enough_toast": f"Не хватает {shop.CURRENCY_PLAIN} для улучшения печи.",
         "upgrade_oven_busy_toast": "Нельзя улучшать печь, пока в ней что-то готовится.",
         "upgrade_oven_max_toast": "Эта печь уже улучшена до максимума.",
-        "upgrade_oven_done_toast": "🔧 Печь улучшена до {level} уровня! Выпечка стала быстрее.",
+        "upgrade_oven_done_toast": "🔧 Печь улучшена до {level} уровня! Время выпечки сокращено на {percent}%.",
     },
     "en": {
         "title": "🥐 <b>Bakery</b>",
@@ -654,7 +661,7 @@ TEXTS = {
         "upgrade_oven_not_enough_toast": f"Not enough {shop.CURRENCY_PLAIN} to upgrade this oven.",
         "upgrade_oven_busy_toast": "Can't upgrade an oven while something is baking in it.",
         "upgrade_oven_max_toast": "This oven is already at max level.",
-        "upgrade_oven_done_toast": "🔧 Oven upgraded to level {level}! Baking is faster now.",
+        "upgrade_oven_done_toast": "🔧 Oven upgraded to level {level}! Baking time reduced by {percent}%.",
     },
 }
 
@@ -1832,6 +1839,7 @@ def _build_bakery_view(
                     text=t["upgrade_oven_button"].format(cost=OVEN_UPGRADE_COST[level + 1]),
                     callback_data=f"bakery:upgrade:{oven_index}",
                     style="primary",
+                    icon_custom_emoji_id=OVEN_UPGRADE_EMOJI_ID,
                 )
                 row_sizes.append(2)
             else:
@@ -1866,6 +1874,7 @@ def _build_bakery_view(
                 text=t["upgrade_oven_button"].format(cost=OVEN_UPGRADE_COST[level + 1]),
                 callback_data=f"bakery:upgrade:{oven_index}",
                 style="primary",
+                icon_custom_emoji_id=OVEN_UPGRADE_EMOJI_ID,
             )
             row_sizes.append(2)
         else:
@@ -2184,7 +2193,10 @@ async def on_upgrade_oven(callback: CallbackQuery, state: FSMContext) -> None:
         return
 
     new_level = await _get_single_oven_level(callback.from_user.id, oven_index)
-    await callback.answer(t["upgrade_oven_done_toast"].format(level=new_level), show_alert=True)
+    percent = _oven_speedup_percent(new_level)
+    await callback.answer(
+        t["upgrade_oven_done_toast"].format(level=new_level, percent=percent), show_alert=True
+    )
     await _render_and_send(callback, lang, edit=True, page=oven_index // OVENS_PER_PAGE)
 
 
