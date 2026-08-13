@@ -601,8 +601,8 @@ TEXTS = {
         "unlock_oven_not_enough_toast": f"Не хватает {shop.CURRENCY_PLAIN} для этой покупки.",
         "unlock_oven_already_toast": "Эта печь уже открыта.",
         # --- улучшение печей ---
-        "upgrade_oven_button": "🔧 Улучшить — {cost}",
-        "oven_level_line": "<i>🔧 Уровень: {level}/{max_level}</i>",
+        "upgrade_oven_button": "Улучшить — {cost}",
+        "oven_level_line": '<tg-emoji emoji-id="5431816358675366190">🆙</tg-emoji> <i>Уровень: {level}/{max_level}</i>',
         "upgrade_oven_not_enough_toast": f"Не хватает {shop.CURRENCY_PLAIN} для улучшения печи.",
         "upgrade_oven_busy_toast": "Нельзя улучшать печь, пока в ней что-то готовится.",
         "upgrade_oven_max_toast": "Эта печь уже улучшена до максимума.",
@@ -656,8 +656,8 @@ TEXTS = {
         "unlock_oven_not_enough_toast": f"Not enough {shop.CURRENCY_PLAIN} for this purchase.",
         "unlock_oven_already_toast": "This oven is already unlocked.",
         # --- oven upgrades ---
-        "upgrade_oven_button": "🔧 Upgrade — {cost}",
-        "oven_level_line": "<i>🔧 Level: {level}/{max_level}</i>",
+        "upgrade_oven_button": "Upgrade — {cost}",
+        "oven_level_line": '<tg-emoji emoji-id="5431816358675366190">🆙</tg-emoji> <i>Level: {level}/{max_level}</i>',
         "upgrade_oven_not_enough_toast": f"Not enough {shop.CURRENCY_PLAIN} to upgrade this oven.",
         "upgrade_oven_busy_toast": "Can't upgrade an oven while something is baking in it.",
         "upgrade_oven_max_toast": "This oven is already at max level.",
