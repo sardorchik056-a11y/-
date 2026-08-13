@@ -122,6 +122,67 @@ PLOT_UNLOCK_COST = {
 # аналогичные *_EMOJI_ID константы, тот же приём).
 PLOT_LOCK_EMOJI_ID = "5296369303661067030"
 
+# Кастомные премиум-эмодзи для кнопок пагинации ("◀️ Пред. страница" /
+# "След. страница ▶️") — те же самые ID, что уже используются в
+# bakery.py (см. там PAGE_PREV_EMOJI_ID/PAGE_NEXT_EMOJI_ID) — единый
+# визуальный стиль пагинации во всех разделах бота.
+PAGE_PREV_EMOJI_ID = "5255703720078879038"   # 🔙
+PAGE_NEXT_EMOJI_ID = "5253767677670862169"   # 🔜
+
+
+# ==========================
+#   УЛУЧШЕНИЕ ГРЯДОК
+# ==========================
+# У каждой грядки (независимо от PLOT_UNLOCK_COST — это про открытие
+# самой грядки, а это про её "прокачку") есть уровень от 1 до
+# PLOT_UPGRADE_MAX_LEVEL. Уровень хранится в отдельной таблице
+# garden_plot_levels (заводится лениво в ensure_achv_tables, см. ниже) —
+# отсутствие строки означает уровень 1 (никогда не улучшалась).
+#
+# Каждый уровень сверх первого сокращает время выращивания ЛЮБОЙ
+# культуры именно на этой грядке — линейно, поровну на каждый уровень,
+# так что к 10 уровню суммарное ускорение ровно PLOT_UPGRADE_MAX_SPEEDUP
+# (см. _plot_time_factor). Улучшать можно только пустую грядку (пока на
+# ней ничего не растёт) — иначе пришлось бы задним числом пересчитывать
+# уже тикающий таймер урожая и переставлять фоновую задачу автосбора
+# (см. _schedule_auto_harvest), а так эффект уровня просто "запекается"
+# в момент посадки (plant_crop) и дальше не меняется до следующего
+# сбора — как и разовый бонус от привилегии (_privilege_speedup_offset).
+PLOT_UPGRADE_MAX_LEVEL = 10
+
+# Максимальное ускорение на 10 уровне: время выращивания сокращается не
+# более чем в 4 раза (т.е. становится 25% от базового).
+PLOT_UPGRADE_MAX_SPEEDUP = 4.0
+
+# Стоимость перехода НА уровень N (ключ — целевой уровень 2..10) в Pn.
+# Геометрическая прогрессия от 3000 (2 уровень) до 150000 (10 уровень).
+PLOT_UPGRADE_COST = {
+    2: 3000,
+    3: 4900,
+    4: 8000,
+    5: 13000,
+    6: 21200,
+    7: 34600,
+    8: 56400,
+    9: 92000,
+    10: 150000,
+}
+
+
+def _plot_time_factor(level: int) -> float:
+    """Множитель к времени роста для уровня грядки level: 1.0 на уровне 1
+    (без ускорения), линейно убывает до 1/PLOT_UPGRADE_MAX_SPEEDUP на
+    уровне PLOT_UPGRADE_MAX_LEVEL (см. докстринг раздела выше)."""
+    level = max(1, min(PLOT_UPGRADE_MAX_LEVEL, level))
+    min_factor = 1 / PLOT_UPGRADE_MAX_SPEEDUP
+    return 1 - (level - 1) * (1 - min_factor) / (PLOT_UPGRADE_MAX_LEVEL - 1)
+
+
+def _effective_grow_seconds(crop_id: str, level: int) -> float:
+    """Время выращивания crop_id на грядке уровня level, с учётом
+    ускорения от уровня грядки (см. _plot_time_factor)."""
+    return CROPS[crop_id]["grow_seconds"] * _plot_time_factor(level)
+
 # Пороги общего счётчика собранных фруктов (см. _bump_harvest_count) —
 # garden_harvest_10/100/1000/10000.
 _TOTAL_HARVEST_THRESHOLDS = [
@@ -286,8 +347,14 @@ TEXTS = {
         "unlocked_toast": "🌱 Открыта новая грядка!",
         "unlock_not_enough_toast": "Не хватает монет, чтобы открыть эту грядку.",
         "unlock_already_toast": "Эта грядка уже открыта.",
-        "page_prev_button": "◀️ Пред. страница",
-        "page_next_button": "След. страница ▶️",
+        "page_prev_button": "Пред. страница",
+        "page_next_button": "След. страница",
+        "upgrade_button": "🔧 Улучшить — {cost}",
+        "plot_level_line": "<i>🔧 Уровень: {level}/{max_level}</i>",
+        "upgrade_not_enough_toast": "Не хватает монет для улучшения грядки.",
+        "upgrade_busy_toast": "Нельзя улучшать грядку, пока на ней что-то растёт.",
+        "upgrade_max_toast": "Эта грядка уже улучшена до максимума.",
+        "upgrade_done_toast": "🔧 Грядка улучшена до {level} уровня! Выращивание стало быстрее.",
     },
     "en": {
         "title": "🌿 <b>Garden</b>",
@@ -314,8 +381,14 @@ TEXTS = {
         "unlocked_toast": "🌱 A new plot is unlocked!",
         "unlock_not_enough_toast": "Not enough coins to unlock this plot.",
         "unlock_already_toast": "This plot is already unlocked.",
-        "page_prev_button": "◀️ Prev page",
-        "page_next_button": "Next page ▶️",
+        "page_prev_button": "Prev page",
+        "page_next_button": "Next page",
+        "upgrade_button": "🔧 Upgrade — {cost}",
+        "plot_level_line": "<i>🔧 Level: {level}/{max_level}</i>",
+        "upgrade_not_enough_toast": "Not enough coins to upgrade this plot.",
+        "upgrade_busy_toast": "Can't upgrade a plot while something is growing on it.",
+        "upgrade_max_toast": "This plot is already at max level.",
+        "upgrade_done_toast": "🔧 Plot upgraded to level {level}! Growing is faster now.",
     },
 }
 
@@ -408,12 +481,18 @@ async def plant_crop(user_id: int, plot_index: int, crop_id: str, lang: str) -> 
     два быстрых тапа по разным культурам почти одновременно проходят
     проверку "грядка свободна" и один урожай тихо затирает другой.
 
+    Время роста берётся с поправкой на уровень грядки (см.
+    _effective_grow_seconds/PLOT_UPGRADE_COST) — чем выше уровень, тем
+    короче базовое время ДО применения ускорения от привилегии ниже.
+
     Если у игрока активна привилегия с ускорением роста — возвращаемый
     planted_at "задним числом" сдвинут в прошлое (см.
     _privilege_speedup_offset), поэтому созреет культура раньше на тот
     же процент, а сам таймстамп по-прежнему честно отражает момент,
     от которого нужно отсчитывать рост."""
-    speedup_offset = await _privilege_speedup_offset(user_id, CROPS[crop_id]["grow_seconds"])
+    level = await _get_single_plot_level(user_id, plot_index)
+    grow_seconds = _effective_grow_seconds(crop_id, level)
+    speedup_offset = await _privilege_speedup_offset(user_id, grow_seconds)
 
     async with database.user_lock(user_id):
         db = await database.get_db()
@@ -496,6 +575,80 @@ async def unlock_plot(user_id: int, plot_index: int) -> str:
         await db.execute(
             "INSERT OR IGNORE INTO garden_plot_unlocks (user_id, plot_index) VALUES (?, ?)",
             (user_id, plot_index),
+        )
+        await database.flush()
+
+    return "ok"
+
+
+async def _get_plot_levels(user_id: int) -> dict[int, int]:
+    """Индекс грядки -> её текущий уровень улучшения. Грядок без строки
+    в garden_plot_levels (никогда не улучшались) в словаре нет — см.
+    _plot_level, которая для них возвращает уровень 1 по умолчанию."""
+    db = await database.get_db()
+    async with db.execute(
+        "SELECT plot_index, level FROM garden_plot_levels WHERE user_id = ?", (user_id,)
+    ) as cursor:
+        return {row["plot_index"]: row["level"] async for row in cursor}
+
+
+def _plot_level(levels: dict[int, int], plot_index: int) -> int:
+    return levels.get(plot_index, 1)
+
+
+async def _get_single_plot_level(user_id: int, plot_index: int) -> int:
+    db = await database.get_db()
+    async with db.execute(
+        "SELECT level FROM garden_plot_levels WHERE user_id = ? AND plot_index = ?",
+        (user_id, plot_index),
+    ) as cursor:
+        row = await cursor.fetchone()
+    return row["level"] if row else 1
+
+
+async def upgrade_plot(user_id: int, plot_index: int) -> str:
+    """Повышает уровень грядки plot_index на 1 (см. PLOT_UPGRADE_COST/
+    PLOT_UPGRADE_MAX_LEVEL). Списание — через shop.charge_balance, тот
+    же паттерн, что и в unlock_plot (лок на user_id, проверка+списание
+    одним вызовом). Возвращает:
+      "ok"          — улучшено прямо сейчас
+      "busy"        — на грядке сейчас что-то растёт, улучшать нельзя
+                       (см. докстринг раздела УЛУЧШЕНИЕ ГРЯДОК)
+      "max_level"   — уже максимальный уровень
+      "not_enough"  — не хватило монет (ничего не списано)
+    Локальный импорт shop — по той же причине, что и в unlock_plot."""
+    import shop
+
+    async with database.user_lock(user_id):
+        db = await database.get_db()
+        async with db.execute(
+            "SELECT crop_id FROM garden_plots WHERE user_id = ? AND plot_index = ?",
+            (user_id, plot_index),
+        ) as cursor:
+            plot_row = await cursor.fetchone()
+        if plot_row is not None and plot_row["crop_id"] is not None:
+            return "busy"
+
+        async with db.execute(
+            "SELECT level FROM garden_plot_levels WHERE user_id = ? AND plot_index = ?",
+            (user_id, plot_index),
+        ) as cursor:
+            level_row = await cursor.fetchone()
+        current_level = level_row["level"] if level_row else 1
+        if current_level >= PLOT_UPGRADE_MAX_LEVEL:
+            return "max_level"
+
+        next_level = current_level + 1
+        charged = await shop.charge_balance(user_id, PLOT_UPGRADE_COST[next_level])
+        if not charged:
+            return "not_enough"
+
+        await db.execute(
+            """
+            INSERT INTO garden_plot_levels (user_id, plot_index, level) VALUES (?, ?, ?)
+            ON CONFLICT (user_id, plot_index) DO UPDATE SET level = excluded.level
+            """,
+            (user_id, plot_index, next_level),
         )
         await database.flush()
 
@@ -672,11 +825,16 @@ async def _auto_collect_ready(user_id: int) -> list[dict]:
     ) as cursor:
         rows = await cursor.fetchall()
 
+    # Уровень грядки не меняется, пока на ней что-то растёт (upgrade_plot
+    # запрещает улучшение занятой грядки), так что текущий уровень —
+    # тот же, что был в момент посадки, и его безопасно использовать тут.
+    levels = await _get_plot_levels(user_id)
+
     achv_results = []
     collected_count = 0
     for row in rows:
         crop_id = row["crop_id"]
-        grow_seconds = CROPS[crop_id]["grow_seconds"]
+        grow_seconds = _effective_grow_seconds(crop_id, _plot_level(levels, row["plot_index"]))
         if now - row["planted_at"] >= grow_seconds:
             collected, _xp, _level_info, results = await _collect_plot_if_matches(
                 user_id, row["plot_index"], crop_id, row["planted_at"]
@@ -703,11 +861,16 @@ _background_tasks: set[asyncio.Task] = set()
 
 
 def _schedule_auto_harvest(
-    bot: Bot, user_id: int, plot_index: int, crop_id: str, planted_at: float, lang: str
+    bot: Bot, user_id: int, plot_index: int, crop_id: str, planted_at: float, lang: str, level: int = 1
 ) -> None:
     """Создаёт фоновую задачу: как только грядка созреет, урожай сам
-    переместится в корзину, а игроку придёт уведомление."""
-    grow_seconds = CROPS[crop_id]["grow_seconds"]
+    переместится в корзину, а игроку придёт уведомление. level — уровень
+    грядки НА МОМЕНТ ПОСАДКИ (см. _effective_grow_seconds) — он же
+    "запекается" в planted_at через _privilege_speedup_offset в
+    plant_crop, дальше на время роста этой конкретной посадки не влияет,
+    даже если игрок теоретически как-то изменит уровень грядки (upgrade_plot
+    и так запрещает улучшать занятую грядку — см. её докстринг)."""
+    grow_seconds = _effective_grow_seconds(crop_id, level)
     delay = max(0.0, grow_seconds - (time.time() - planted_at))
 
     task = asyncio.create_task(
@@ -773,6 +936,7 @@ async def reschedule_pending_harvests(bot: Bot) -> None:
         rows = await cursor.fetchall()
 
     for row in rows:
+        level = await _get_single_plot_level(row["user_id"], row["plot_index"])
         _schedule_auto_harvest(
             bot,
             row["user_id"],
@@ -780,6 +944,7 @@ async def reschedule_pending_harvests(bot: Bot) -> None:
             row["crop_id"],
             row["planted_at"],
             row["lang"] or "ru",
+            level,
         )
 
 
@@ -879,6 +1044,18 @@ async def ensure_achv_tables() -> None:
         CREATE TABLE IF NOT EXISTS garden_plot_unlocks (
             user_id INTEGER NOT NULL,
             plot_index INTEGER NOT NULL,
+            PRIMARY KEY (user_id, plot_index)
+        )
+        """
+    )
+    # Уровни улучшения грядок (см. PLOT_UPGRADE_COST/upgrade_plot выше) —
+    # отсутствие строки означает уровень 1 (не улучшалась).
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS garden_plot_levels (
+            user_id INTEGER NOT NULL,
+            plot_index INTEGER NOT NULL,
+            level INTEGER NOT NULL DEFAULT 1,
             PRIMARY KEY (user_id, plot_index)
         )
         """
@@ -1088,6 +1265,7 @@ def _build_garden_view(
     inventory: dict[str, int],
     page: int,
     unlocked_extra: set[int],
+    levels: dict[int, int],
 ) -> tuple[str, object]:
     t = TEXTS[lang]
     now = time.time()
@@ -1123,22 +1301,41 @@ def _build_garden_view(
             row_sizes.append(1)
             continue
 
+        level = _plot_level(levels, plot_index)
+        # Кнопка "Улучшить" показывается парой с основной кнопкой грядки
+        # (посадить/рост), пока грядка не достигла максимального уровня —
+        # см. PLOT_UPGRADE_MAX_LEVEL/upgrade_plot.
+        can_upgrade = level < PLOT_UPGRADE_MAX_LEVEL
+
         if crop_id is None:
-            # Пустая грядка ничем не описывается в тексте — только кнопка,
-            # чтобы что-то на ней посадить.
+            # Пустая грядка ничем не описывается в тексте — только кнопка
+            # (плюс кнопка улучшения), чтобы что-то на ней посадить.
+            if level > 1:
+                lines.append(
+                    t["plot_level_line"].format(level=level, max_level=PLOT_UPGRADE_MAX_LEVEL)
+                )
+                lines.append("")
             builder.button(
                 text=t["plant_button"],
                 callback_data=f"garden:choose:{plot_index}",
                 style="primary",
             )
-            row_sizes.append(1)
+            if can_upgrade:
+                builder.button(
+                    text=t["upgrade_button"].format(cost=PLOT_UPGRADE_COST[level + 1]),
+                    callback_data=f"garden:upgrade:{plot_index}",
+                    style="primary",
+                )
+                row_sizes.append(2)
+            else:
+                row_sizes.append(1)
             continue
 
         # Сюда попадают только ещё растущие грядки — всё созревшее уже
         # тихо переложено в корзину подстраховкой в _get_plots.
         crop = CROPS[crop_id]
         elapsed = now - plot["planted_at"]
-        grow_seconds = crop["grow_seconds"]
+        grow_seconds = _effective_grow_seconds(crop_id, level)
         percent = round(elapsed / grow_seconds * 100)
         remaining = grow_seconds - elapsed
 
@@ -1150,12 +1347,24 @@ def _build_garden_view(
                 time=_format_duration(remaining, lang),
             )
         )
+        if level > 1:
+            lines.append(
+                t["plot_level_line"].format(level=level, max_level=PLOT_UPGRADE_MAX_LEVEL)
+            )
         builder.button(
             text=t["plot_button_growing"].format(emoji=crop["emoji"], percent=percent),
             callback_data=f"garden:info:{plot_index}",
             style="primary",
         )
-        row_sizes.append(1)
+        if can_upgrade:
+            builder.button(
+                text=t["upgrade_button"].format(cost=PLOT_UPGRADE_COST[level + 1]),
+                callback_data=f"garden:upgrade:{plot_index}",
+                style="primary",
+            )
+            row_sizes.append(2)
+        else:
+            row_sizes.append(1)
 
         lines.append("")
 
@@ -1167,6 +1376,7 @@ def _build_garden_view(
             text=t["page_prev_button"],
             callback_data=f"garden:page:{page - 1}",
             style="primary",
+            icon_custom_emoji_id=PAGE_PREV_EMOJI_ID,
         )
         nav_count += 1
     if page < total_pages - 1:
@@ -1174,6 +1384,7 @@ def _build_garden_view(
             text=t["page_next_button"],
             callback_data=f"garden:page:{page + 1}",
             style="primary",
+            icon_custom_emoji_id=PAGE_NEXT_EMOJI_ID,
         )
         nav_count += 1
     if nav_count:
@@ -1196,7 +1407,7 @@ def _build_garden_view(
     return text, builder.as_markup()
 
 
-def _build_crop_choice(lang: str, plot_index: int) -> tuple[str, object]:
+def _build_crop_choice(lang: str, plot_index: int, level: int) -> tuple[str, object]:
     t = TEXTS[lang]
     text = t["choose_crop_title"]
 
@@ -1212,7 +1423,10 @@ def _build_crop_choice(lang: str, plot_index: int) -> tuple[str, object]:
             text=t["crop_button"].format(
                 emoji=crop["emoji"],
                 name=crop["name"][lang],
-                time=_format_duration(crop["grow_seconds"], lang),
+                # Время уже с поправкой на уровень этой грядки (см.
+                # _effective_grow_seconds) — чтобы игрок видел реальное
+                # время ДО посадки, а не базовое время культуры.
+                time=_format_duration(_effective_grow_seconds(cid, level), lang),
             ),
             callback_data=f"garden:plant:{plot_index}:{cid}",
             style="primary",
@@ -1249,7 +1463,8 @@ async def _render_and_send(message_or_callback, lang: str, edit: bool = False, p
     plots, achv_results = await _get_plots(user_id)
     inventory = await get_inventory(user_id)
     unlocked_extra = await _get_unlocked_extra_plots(user_id)
-    text, markup = _build_garden_view(lang, plots, inventory, page, unlocked_extra)
+    levels = await _get_plot_levels(user_id)
+    text, markup = _build_garden_view(lang, plots, inventory, page, unlocked_extra, levels)
 
     # Картинка раздела (см. admin.py: admin:sections, ключ "garden") —
     # если задана, экран сада отправляется/правится как фото с текстом
@@ -1306,7 +1521,8 @@ async def on_choose_crop(callback: CallbackQuery, state: FSMContext) -> None:
         await callback.answer()
         return
 
-    text, markup = _build_crop_choice(lang, plot_index)
+    level = await _get_single_plot_level(callback.from_user.id, plot_index)
+    text, markup = _build_crop_choice(lang, plot_index, level)
 
     import admin
 
@@ -1351,6 +1567,34 @@ async def on_unlock_plot(callback: CallbackQuery, state: FSMContext) -> None:
     await _render_and_send(callback, lang, edit=True, page=plot_index // PLOTS_PER_PAGE)
 
 
+@router.callback_query(F.data.startswith("garden:upgrade:"))
+async def on_upgrade_plot(callback: CallbackQuery, state: FSMContext) -> None:
+    lang = await _get_lang(state, callback.from_user.id)
+    t = TEXTS[lang]
+    plot_index = int(callback.data.split(":")[2])
+
+    # Подстраховка от протухшей клавиатуры — см. on_choose_crop.
+    unlocked_extra = await _get_unlocked_extra_plots(callback.from_user.id)
+    if not _is_plot_unlocked(plot_index, unlocked_extra):
+        await callback.answer()
+        return
+
+    status = await upgrade_plot(callback.from_user.id, plot_index)
+    if status == "not_enough":
+        await callback.answer(t["upgrade_not_enough_toast"], show_alert=True)
+        return
+    if status == "busy":
+        await callback.answer(t["upgrade_busy_toast"], show_alert=True)
+        return
+    if status == "max_level":
+        await callback.answer(t["upgrade_max_toast"], show_alert=True)
+        return
+
+    new_level = await _get_single_plot_level(callback.from_user.id, plot_index)
+    await callback.answer(t["upgrade_done_toast"].format(level=new_level), show_alert=True)
+    await _render_and_send(callback, lang, edit=True, page=plot_index // PLOTS_PER_PAGE)
+
+
 @router.callback_query(F.data.startswith("garden:plant:"))
 async def on_plant(callback: CallbackQuery, state: FSMContext) -> None:
     lang = await _get_lang(state, callback.from_user.id)
@@ -1366,6 +1610,8 @@ async def on_plant(callback: CallbackQuery, state: FSMContext) -> None:
         await callback.answer()
         return
 
+    level = await _get_single_plot_level(callback.from_user.id, plot_index)
+
     planted_at = await plant_crop(callback.from_user.id, plot_index, crop_id, lang)
     if planted_at is None:
         await callback.answer(t["plot_taken_toast"], show_alert=True)
@@ -1373,13 +1619,16 @@ async def on_plant(callback: CallbackQuery, state: FSMContext) -> None:
 
     # Как только грядка созреет — фоновая задача сама переложит урожай
     # в корзину и пришлёт уведомление, ничего собирать вручную не нужно.
-    _schedule_auto_harvest(callback.bot, callback.from_user.id, plot_index, crop_id, planted_at, lang)
+    _schedule_auto_harvest(
+        callback.bot, callback.from_user.id, plot_index, crop_id, planted_at, lang, level
+    )
 
+    grow_seconds = _effective_grow_seconds(crop_id, level)
     await callback.answer(
         t["planted_toast"].format(
             emoji=crop["emoji"],
             name=crop["name"][lang],
-            time=_format_duration(max(0.0, crop["grow_seconds"] - (time.time() - planted_at)), lang),
+            time=_format_duration(max(0.0, grow_seconds - (time.time() - planted_at)), lang),
         ),
         show_alert=True,
     )
@@ -1415,9 +1664,10 @@ async def on_plot_info(callback: CallbackQuery, state: FSMContext) -> None:
         return
 
     crop = CROPS[plot["crop_id"]]
+    level = await _get_single_plot_level(callback.from_user.id, plot_index)
     now = time.time()
     elapsed = now - plot["planted_at"]
-    grow_seconds = crop["grow_seconds"]
+    grow_seconds = _effective_grow_seconds(plot["crop_id"], level)
     percent = round(elapsed / grow_seconds * 100)
     remaining = grow_seconds - elapsed
 
