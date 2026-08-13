@@ -599,13 +599,20 @@ def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
 
-def _full_stats_achievement(row: aiosqlite.Row) -> list[str]:
+def _full_stats_achievement(row: aiosqlite.Row, hunger: float | None = None) -> list[str]:
     """['panda_full_stats'], если голод/настроение/дружба у панды разом
     на 100% прямо сейчас (row — актуальная, уже "уставшаяся" строка,
-    как после _settle/feed_panda/restore_hunger/pet_panda), иначе []."""
-    hunger = calc_hunger_percent(
-        row["last_fed_at"], time.time(), row["hunger_phase1_seconds"], row["hunger_phase2_seconds"]
-    )
+    как после _settle/feed_panda/restore_hunger/pet_panda), иначе [].
+
+    hunger можно передать явно (см. on_feed_item) — если его не считать
+    заново через time.time(), а взять то значение, которое уже точно
+    вычислил restore_hunger в момент кормления, голод не успевает
+    "утечь" за время между кормлением и проверкой ачивки (см. также
+    _current_hunger и баг с недостижимой panda_hunger_100 в on_feed_item)."""
+    if hunger is None:
+        hunger = calc_hunger_percent(
+            row["last_fed_at"], time.time(), row["hunger_phase1_seconds"], row["hunger_phase2_seconds"]
+        )
     if hunger >= 100 and row["mood"] >= MOOD_MAX and row["friendship"] >= FRIEND_MAX:
         return ["panda_full_stats"]
     return []
@@ -701,10 +708,20 @@ async def feed_panda(user_id: int) -> aiosqlite.Row:
         return await _fetch_row(db, user_id)
 
 
-async def restore_hunger(user_id: int, percent: float) -> aiosqlite.Row:
+async def restore_hunger(user_id: int, percent: float) -> tuple[aiosqlite.Row, float]:
     """Восполняет голод на заданный процент (не до конца, в отличие от feed_panda).
     Используется садом: съеденный фрукт утоляет голод частично. Пересчитывает
     last_fed_at так, чтобы calc_hunger_percent сразу же отражал прибавку.
+
+    Возвращает (row, new_hunger) — new_hunger нужно использовать для проверки
+    ачивок ВМЕСТО повторного calc_hunger_percent(..., time.time(), ...) в
+    вызывающем коде: last_fed_at здесь выставляется так, что голод в МОМЕНТ
+    этого вызова равен new_hunger, но пока on_feed_item дойдёт до проверки
+    ачивок (после нескольких await: commit, callback.answer, edit_text,
+    _bump_feed_count и т.д.) реальное время уйдёт вперёд, и пересчитанный
+    заново голод окажется чуть МЕНЬШЕ 100% — из-за чего "achv >= 100" почти
+    никогда не срабатывает. Поэтому используем именно это, уже посчитанное
+    здесь значение.
 
     Захват лока тут обязателен: без него два фрукта, скормленных почти
     одновременно, могли бы прочитать одно и то же исходное состояние и
@@ -751,7 +768,7 @@ async def restore_hunger(user_id: int, percent: float) -> aiosqlite.Row:
             (new_last_fed_at, new_ticks_applied, new_ticks_applied, user_id),
         )
         await database.commit()
-        return await _fetch_row(db, user_id)
+        return await _fetch_row(db, user_id), new_hunger
 
 
 async def pet_panda(user_id: int) -> tuple[bool, aiosqlite.Row, float]:
@@ -1744,7 +1761,7 @@ async def on_feed_item(callback: CallbackQuery, state: FSMContext) -> None:
         item = bakery.RECIPES[item_id]
         restore = bakery.roll_hunger_restore(item_id)
 
-    row = await restore_hunger(user_id, restore)
+    row, hunger_after_feed = await restore_hunger(user_id, restore)
 
     await callback.answer(
         t["fed_toast"].format(
@@ -1767,9 +1784,9 @@ async def on_feed_item(callback: CallbackQuery, state: FSMContext) -> None:
     bakery_fed_achvs = await bakery.bump_panda_fed(user_id, item_id) if item_type == "bakery" else []
     achv_ids = [
         "first_feed",
-        *_full_stats_achievement(row),
+        *_full_stats_achievement(row, hunger_after_feed),
         *_feed_count_achievements(total_feeds),
-        *(["panda_hunger_100"] if _current_hunger(row) >= 100 else []),
+        *(["panda_hunger_100"] if hunger_after_feed >= 100 else []),
         *never_hungry,
         *care_streaks,
         # "Прямо с грядки" (garden_feed_from_basket, категория "сад") —
