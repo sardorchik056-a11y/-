@@ -76,6 +76,7 @@ import time
 
 import aiosqlite
 from aiogram import Bot, F, Router
+from aiogram.exceptions import SkipHandler
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -2387,6 +2388,47 @@ async def on_buy_custom_request(callback: CallbackQuery, state: FSMContext) -> N
     await callback.message.answer(t["ask_qty"].format(emoji=ing["emoji"], name=ing["name"][lang]))
 
 
+def _is_navigation_text(raw: str) -> bool:
+    """Похоже ли сообщение на попытку уйти в другой раздел/команду, а не
+    на ввод количества. Нужно, чтобы состояние waiting_quantity не
+    проглатывало нажатия кнопок меню (см. баг: пекарня/ачивки/донат не
+    открывались, пока висело это состояние — сообщение перехватывалось
+    здесь и отвечало "Введите число...").
+
+    Локальный импорт main.py — main.py импортирует bakery.py на верхнем
+    уровне, поэтому импортировать в обратную сторону можно только внутри
+    функции (по аналогии с локальным `import admin` в этом же файле)."""
+    if not raw:
+        return False
+    if raw.startswith("/"):
+        return True
+
+    import main
+
+    triggers: set[str] = set()
+    for group in (
+        main.GARDEN_TRIGGERS,
+        main.PROFILE_TRIGGERS,
+        main.BAKERY_TRIGGERS,
+        main.MARKET_TRIGGERS,
+        main.PANDA_TRIGGERS,
+        main.LEADERS_TRIGGERS,
+        main.DONATE_TRIGGERS,
+        main.ACHIEVEMENTS_TRIGGERS,
+    ):
+        triggers.update(group)
+
+    button_texts: set[str] = set()
+    for lang_texts in main.TEXTS.values():
+        for key, value in lang_texts.items():
+            if key.startswith("menu_") and key != "menu_opened":
+                button_texts.add(value)
+    button_texts.update(BUTTON_TEXT.values())
+
+    normalized = raw.strip().lower()
+    return normalized in triggers or raw.strip() in button_texts
+
+
 @router.message(StateFilter(BakeryStates.waiting_quantity))
 async def on_custom_qty_received(message: Message, state: FSMContext) -> None:
     lang = await _get_lang(state, message.from_user.id)
@@ -2399,6 +2441,16 @@ async def on_custom_qty_received(message: Message, state: FSMContext) -> None:
         return
 
     raw = (message.text or "").strip()
+
+    # Пользователь ушёл в другой раздел / ввёл команду, не закончив
+    # ввод количества — сбрасываем зависшее состояние и отдаём апдейт
+    # дальше по цепочке роутеров, чтобы сработал нужный хендлер
+    # (open_bakery / donate.py / achives.py и т.д.), а не наш "неверное
+    # число".
+    if _is_navigation_text(raw):
+        await state.set_state(None)
+        raise SkipHandler
+
     if not raw.isdigit() or not (1 <= int(raw) <= MAX_BUY_QUANTITY):
         await message.answer(t["qty_invalid"].format(max=MAX_BUY_QUANTITY))
         return
