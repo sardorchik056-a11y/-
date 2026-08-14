@@ -287,11 +287,21 @@ async def _top_level(period: str) -> list[dict]:
 
     await _ensure_schema()
     start, end = _period_bounds(period)
+    # Тут раньше сортировали SQL-запросом по gained (сколько опыта
+    # набрано за период), а показывали в списке итоговый текущий
+    # уровень (level_from_xp(current_xp)) — два разных числа, поэтому
+    # порядок в топе не совпадал с показанным уровнем (95 мог стоять
+    # ниже 90). LIMIT в SQL тоже убран: он раньше отсекал топ по
+    # gained ДО пересчёта на уровень, из-за чего игрок с высоким
+    # уровнем, но небольшим приростом за период, мог вообще не попасть
+    # в кандидаты. Теперь берём всех, кто был активен в периоде, и уже
+    # в питоне сортируем и режем по TOP_LIMIT по тому же полю, которое
+    # показываем — level (при равенстве — по xp).
     async with db.execute(
         "SELECT user_id, SUM(amount) AS gained FROM leader_events "
         "WHERE metric = 'xp' AND created_at >= ? AND created_at <= ? "
-        "GROUP BY user_id ORDER BY gained DESC LIMIT ?",
-        (start, end, TOP_LIMIT),
+        "GROUP BY user_id",
+        (start, end),
     ) as cursor:
         rows = await cursor.fetchall()
 
@@ -299,8 +309,15 @@ async def _top_level(period: str) -> list[dict]:
     for row in rows:
         current_xp = await prof.get_xp(row["user_id"])
         level, _, _ = prof.level_from_xp(current_xp)
-        result.append({"user_id": row["user_id"], "level": level, "gained": row["gained"]})
-    return result
+        result.append({
+            "user_id": row["user_id"],
+            "level": level,
+            "xp": current_xp,
+            "gained": row["gained"],
+        })
+
+    result.sort(key=lambda r: (r["level"], r["xp"]), reverse=True)
+    return result[:TOP_LIMIT]
 
 
 async def _top_fire(period: str) -> list[dict]:
