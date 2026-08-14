@@ -5,6 +5,7 @@ import re
 from aiogram import Bot, Dispatcher, Router, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.exceptions import SkipHandler
 from aiogram.filters import CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -663,6 +664,41 @@ def _transfer_source_keyboard(lang: str) -> InlineKeyboardBuilder:
     return builder.as_markup()
 
 
+def _is_navigation_text(raw: str) -> bool:
+    """Похоже ли сообщение на попытку уйти в другой раздел/команду, а не
+    на ввод данных для /передать. Нужно, чтобы TransferFlow.waiting_target
+    / .choosing_amount не проглатывали нажатия кнопок меню, пока перевод
+    не завершён (тот же баг, что чинили в bakery.py: состояние висит,
+    и любое следующее сообщение ловится этим хендлером вместо открытия
+    нужного раздела)."""
+    raw = raw.strip()
+    if not raw:
+        return False
+    if raw.startswith("/"):
+        return True
+
+    triggers: set[str] = set()
+    for group in (
+        GARDEN_TRIGGERS,
+        PROFILE_TRIGGERS,
+        BAKERY_TRIGGERS,
+        MARKET_TRIGGERS,
+        PANDA_TRIGGERS,
+        LEADERS_TRIGGERS,
+        DONATE_TRIGGERS,
+        ACHIEVEMENTS_TRIGGERS,
+    ):
+        triggers.update(group)
+
+    button_texts: set[str] = set()
+    for lang_texts in TEXTS.values():
+        for key, value in lang_texts.items():
+            if key.startswith("menu_") and key != "menu_opened":
+                button_texts.add(value)
+
+    return raw.lower() in triggers or raw in button_texts
+
+
 async def _ask_transfer_source(message: Message, state: FSMContext, lang: str, user_id: int, username: str | None) -> None:
     await state.update_data(transfer_target_id=user_id, transfer_target_username=username)
     await state.set_state(None)
@@ -709,6 +745,11 @@ async def cmd_transfer_start(message: Message, state: FSMContext) -> None:
 
 @router.message(TransferFlow.waiting_target)
 async def cmd_transfer_target_input(message: Message, state: FSMContext) -> None:
+    raw = message.text or ""
+    if _is_navigation_text(raw):
+        await state.set_state(None)
+        raise SkipHandler
+
     lang = await _get_lang_for(message.from_user.id)
     t = TRANSFER_TEXTS[lang]
 
@@ -831,10 +872,14 @@ async def cb_transfer_item(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.message(TransferFlow.choosing_amount)
 async def cmd_transfer_amount(message: Message, state: FSMContext, bot: Bot) -> None:
+    raw = (message.text or "").strip()
+    if _is_navigation_text(raw):
+        await state.set_state(None)
+        raise SkipHandler
+
     lang = await _get_lang_for(message.from_user.id)
     t = TRANSFER_TEXTS[lang]
 
-    raw = (message.text or "").strip()
     if not raw.isdigit() or int(raw) <= 0:
         await message.reply(t["qty_invalid"])
         return
