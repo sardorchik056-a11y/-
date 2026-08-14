@@ -76,7 +76,7 @@ import time
 
 import aiosqlite
 from aiogram import Bot, F, Router
-from aiogram.exceptions import SkipHandler
+from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
