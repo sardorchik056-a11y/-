@@ -318,6 +318,25 @@ def next_level_cost(level: int) -> int | None:
         return None
     return PANDA_LEVEL_BAMBOO_COST[level + 1]
 
+
+# --- "Дерево чудес" (клик-механика, см. click_wonder_tree) ---
+# За каждый клик по дереву — ровно один из четырёх исходов, шансы не
+# пересекаются и идут в фиксированном порядке (бамбук -> роса -> орех
+# -> карма как "утешительный приз" на оставшуюся вероятность):
+#   5% — чудесный бамбук (тратится на уровень, см. level_up_panda);
+#   5% — роса;
+#   5% — волшебный орех;
+#   85% (всё, что не выпало выше) — 10-50 кармы.
+# Роса и волшебный орех сейчас только копятся в инвентаре — им, как и
+# чудесному бамбуку, предстоит уйти на будущую прокачку уровня панды,
+# но конкретный рецепт трат пока не решён. Карма — вовсе просто
+# счётчик-заглушка без применения в игре.
+TREE_BAMBOO_CHANCE = 0.05
+TREE_DEW_CHANCE = 0.05
+TREE_NUT_CHANCE = 0.05
+TREE_KARMA_MIN = 10
+TREE_KARMA_MAX = 50
+
 # --- настроение и дружба (падают, пока голод < HUNGER_LOW_THRESHOLD) ---
 # Тик — раз в 10-15 реальных минут. Поскольку эффект должен считаться
 # "лениво" по одним лишь таймстампам (без фоновых задач), берём
@@ -541,6 +560,18 @@ TEXTS = {
             "🎉 <i>Панда достигла <b>{level}</b> уровня! Теперь голод длится "
             "дольше — она сможет обходиться без еды примерно на {bonus}% дольше, чем на 1 уровне.</i>"
         ),
+        "tree_button": "🌳 Дерево чудес",
+        "tree_screen_title": "🌳 <b>Дерево чудес</b>",
+        "tree_intro": "<i>Тряхните дерево — вдруг что-нибудь да упадёт!</i>",
+        "tree_stock_bamboo": "🎋 Чудесный бамбук: <b>{count}</b>",
+        "tree_stock_dew": "💧 Роса: <b>{count}</b>",
+        "tree_stock_nut": "🌰 Волшебный орех: <b>{count}</b>",
+        "tree_stock_karma": "✨ Карма: <b>{count}</b>",
+        "tree_click_button": "🌳 Тряхнуть дерево",
+        "tree_toast_bamboo": "🎋 С дерева упал чудесный бамбук!",
+        "tree_toast_dew": "💧 С листьев скатилась капля росы!",
+        "tree_toast_nut": "🌰 Среди веток нашёлся волшебный орех!",
+        "tree_toast_karma": "✨ +{amount} кармы",
     },
     "en": {
         "default_title": f"{NAME_EMOJI} <b>My panda</b>",
@@ -626,6 +657,18 @@ TEXTS = {
             "🎉 <i>The panda reached level <b>{level}</b>! Hunger now lasts "
             "longer — it can go without food about {bonus}% longer than at level 1.</i>"
         ),
+        "tree_button": "🌳 Tree of Wonders",
+        "tree_screen_title": "🌳 <b>Tree of Wonders</b>",
+        "tree_intro": "<i>Shake the tree — maybe something will fall out!</i>",
+        "tree_stock_bamboo": "🎋 Wonder bamboo: <b>{count}</b>",
+        "tree_stock_dew": "💧 Dew: <b>{count}</b>",
+        "tree_stock_nut": "🌰 Magic nut: <b>{count}</b>",
+        "tree_stock_karma": "✨ Karma: <b>{count}</b>",
+        "tree_click_button": "🌳 Shake the tree",
+        "tree_toast_bamboo": "🎋 A wonder bamboo fell from the tree!",
+        "tree_toast_dew": "💧 A drop of dew slid off the leaves!",
+        "tree_toast_nut": "🌰 A magic nut turned up among the branches!",
+        "tree_toast_karma": "✨ +{amount} karma",
     },
 }
 
@@ -929,6 +972,54 @@ async def add_wonder_bamboo(user_id: int, amount: int) -> aiosqlite.Row:
         )
         await database.commit()
         return await _fetch_row(db, user_id)
+
+
+# Исход клика по дереву -> (колонка в таблице panda, шанс). Порядок
+# важен: шансы проверяются по очереди, как отрезки на числовой прямой
+# [0, 1) (см. click_wonder_tree) — с ним же завязан порядок кнопок нет,
+# только порядок сравнения.
+_TREE_OUTCOMES = (
+    ("bamboo", "wonder_bamboo", TREE_BAMBOO_CHANCE),
+    ("dew", "wonder_dew", TREE_DEW_CHANCE),
+    ("nut", "magic_nut", TREE_NUT_CHANCE),
+)
+
+
+async def click_wonder_tree(user_id: int) -> tuple[aiosqlite.Row, str, int]:
+    """Один клик по "Дереву чудес" (кликер, см. panda:tree_click).
+
+    Бросает кубик 0..1 и раздаёт ровно один исход (см. _TREE_OUTCOMES /
+    TREE_KARMA_MIN/MAX выше): редкий предмет (+1 к соответствующей
+    колонке инвентаря) либо, если ни один из них не выпал — случайная
+    карма. Возвращает (обновлённая_строка_панды, тип_исхода, количество),
+    где тип_исхода — один из "bamboo"/"dew"/"nut"/"karma"."""
+    roll = random.random()
+
+    result = "karma"
+    column = "karma"
+    amount = random.randint(TREE_KARMA_MIN, TREE_KARMA_MAX)
+
+    threshold = 0.0
+    for outcome_id, outcome_column, chance in _TREE_OUTCOMES:
+        threshold += chance
+        if roll < threshold:
+            result, column, amount = outcome_id, outcome_column, 1
+            break
+
+    async with database.user_lock(user_id):
+        await _get_or_create_panda_locked(user_id)
+        db = await database.get_db()
+        # column берётся только из фиксированного _TREE_OUTCOMES/"karma"
+        # выше, никогда из пользовательского ввода — подстановка в SQL
+        # безопасна.
+        await db.execute(
+            f"UPDATE panda SET {column} = {column} + ? WHERE user_id = ?",
+            (amount, user_id),
+        )
+        await database.commit()
+        row = await _fetch_row(db, user_id)
+
+    return row, result, amount
 
 
 async def level_up_panda(user_id: int) -> tuple[aiosqlite.Row, bool]:
@@ -1279,12 +1370,17 @@ def _build_panda_view(lang: str, row: aiosqlite.Row) -> tuple[str, object]:
         style="primary",
     )
     builder.button(
+        text=t["tree_button"],
+        callback_data="panda:tree",
+        style="primary",
+    )
+    builder.button(
         text=t["setname_button"] if not row["name"] else t["rename_button"],
         callback_data="panda:setname",
         style="primary",
         icon_custom_emoji_id=SETNAME_BUTTON_EMOJI_ID,
     )
-    builder.adjust(2, 2)
+    builder.adjust(2, 2, 1)
 
     return text, builder.as_markup()
 
@@ -1322,6 +1418,32 @@ def _build_level_view(lang: str, row: aiosqlite.Row) -> tuple[str, object]:
         builder.button(text=t["level_up_button"], callback_data="panda:level_up", style="primary")
 
     builder.button(text=t["back_button"], callback_data="panda:level_back", style="primary")
+    builder.adjust(1)
+
+    return "\n".join(lines), builder.as_markup()
+
+
+def _build_tree_view(lang: str, row: aiosqlite.Row) -> tuple[str, object]:
+    """Экран "Дерево чудес" — клик-механика (см. click_wonder_tree):
+    показывает текущий запас всех четырёх исходов клика и кнопку
+    "Тряхнуть дерево". Экран остаётся на месте после каждого клика —
+    меняются только цифры в тексте (см. on_tree_click)."""
+    t = TEXTS[lang]
+
+    lines = [
+        t["tree_screen_title"],
+        "<b><code>·  ·  ·  ◆  ·  ·  ·</code></b>",
+        t["tree_intro"],
+        "",
+        t["tree_stock_bamboo"].format(count=row["wonder_bamboo"]),
+        t["tree_stock_dew"].format(count=row["wonder_dew"]),
+        t["tree_stock_nut"].format(count=row["magic_nut"]),
+        t["tree_stock_karma"].format(count=row["karma"]),
+    ]
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text=t["tree_click_button"], callback_data="panda:tree_click", style="primary")
+    builder.button(text=t["back_button"], callback_data="panda:tree_back", style="primary")
     builder.adjust(1)
 
     return "\n".join(lines), builder.as_markup()
@@ -2275,6 +2397,46 @@ async def on_level_up(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data == "panda:level_back")
 async def on_level_back(callback: CallbackQuery, state: FSMContext) -> None:
+    lang = await _get_lang(state, callback.from_user.id)
+    row = await _settle(callback.from_user.id)
+    text, markup = _build_panda_view(lang, row)
+    await _safe_edit_text(callback.message, text, reply_markup=markup)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "panda:tree")
+async def on_open_tree(callback: CallbackQuery, state: FSMContext) -> None:
+    """Открывает экран "Дерево чудес" — запас редких предметов/кармы и
+    кнопка "Тряхнуть дерево" (см. click_wonder_tree)."""
+    lang = await _get_lang(state, callback.from_user.id)
+    row = await _settle(callback.from_user.id)
+    text, markup = _build_tree_view(lang, row)
+    await _safe_edit_text(callback.message, text, reply_markup=markup)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "panda:tree_click")
+async def on_tree_click(callback: CallbackQuery, state: FSMContext) -> None:
+    """Один клик по дереву — кликер без кулдауна и лимита нажатий: жми
+    сколько угодно раз подряд (см. click_wonder_tree про сами шансы)."""
+    lang = await _get_lang(state, callback.from_user.id)
+    t = TEXTS[lang]
+    user_id = callback.from_user.id
+
+    row, result, amount = await click_wonder_tree(user_id)
+
+    if result == "karma":
+        toast = t["tree_toast_karma"].format(amount=amount)
+    else:
+        toast = t[f"tree_toast_{result}"]
+    await callback.answer(toast)
+
+    text, markup = _build_tree_view(lang, row)
+    await _safe_edit_text(callback.message, text, reply_markup=markup)
+
+
+@router.callback_query(F.data == "panda:tree_back")
+async def on_tree_back(callback: CallbackQuery, state: FSMContext) -> None:
     lang = await _get_lang(state, callback.from_user.id)
     row = await _settle(callback.from_user.id)
     text, markup = _build_panda_view(lang, row)
