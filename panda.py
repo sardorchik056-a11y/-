@@ -271,17 +271,19 @@ HUNGER_PHASE2_MAX_SECONDS = 4 * 3600  # 4 ч
 HUNGER_LOW_THRESHOLD = 50  # ниже этого % начинают падать настроение и дружба
 
 # --- уровни панды (1-25) ---
-# Прокачиваются ВРУЧНУЮ — накопил нужное количество ЧУДЕСНОГО бамбука
-# (row["wonder_bamboo"]) -> нажал "Повысить уровень" на экране "Уровень"
-# (см. level_up_panda / on_open_level / on_level_up). Никакой
-# автоматики — бамбук просто лежит в инвентаре, пока игрок сам не
-# решит его потратить.
+# Прокачиваются ВРУЧНУЮ — накопил нужное количество ресурсов (карма /
+# чудесный бамбук / роса / волшебный орех — набор зависит от уровня,
+# см. PANDA_LEVEL_COST ниже) -> нажал "Повысить уровень" на экране
+# "Уровень" (см. level_up_panda / on_open_level / on_level_up). Никакой
+# автоматики — всё просто лежит в инвентаре, пока игрок сам не решит
+# это потратить.
 #
 # ВАЖНО: чудесный бамбук — отдельный, особый предмет, никак не связан
 # с обычным бамбуком из сада (garden.py, если он там есть) — тот этой
 # системой не затрагивается и остаётся как есть. Способ ДОБЫТЬ именно
 # чудесный бамбук пока нигде не реализован (скоро будет добавлен
-# отдельно) — задел на будущее см. add_wonder_bamboo.
+# отдельно) — задел на будущее см. add_wonder_bamboo. Карма/роса/орех
+# добываются кликами по "Дереву чудес" (см. click_wonder_tree).
 #
 # Чем выше уровень — тем дольше длятся обе фазы голода (см.
 # hunger_duration_multiplier): линейно от +0% на 1 уровне до +300% на
@@ -289,16 +291,60 @@ HUNGER_LOW_THRESHOLD = 50  # ниже этого % начинают падать
 PANDA_LEVEL_MAX = 25
 PANDA_LEVEL_HUNGER_BONUS_MAX_PERCENT = 300
 
-# Сколько ЧУДЕСНОГО бамбука нужно накопить в инвентаре и потратить ЗА
-# ОДИН РАЗ, чтобы поднять уровень с (level-1) до level (ключ — уровень,
-# на который переходим). Кривая растёт по экспоненте (быстрее в
-# конце), сумма всех порогов 2..25 — ровно 50000 (запрошенный игроком
-# тотал на 25 уровень).
-PANDA_LEVEL_BAMBOO_COST = {
-    2: 2, 3: 3, 4: 4, 5: 6, 6: 10, 7: 14, 8: 21, 9: 31, 10: 46,
-    11: 68, 12: 101, 13: 149, 14: 221, 15: 327, 16: 484, 17: 716,
-    18: 1060, 19: 1568, 20: 2321, 21: 3436, 22: 5085, 23: 7525,
-    24: 11137, 25: 15665,
+# Стоимость перехода на следующий уровень (ключ — уровень, на который
+# переходим) — теперь это НЕ один ресурс, а словарь {ресурс: количество},
+# где ресурс — это название колонки в таблице panda (см. database.py:
+# PANDA_COLUMNS): "karma" / "wonder_bamboo" / "wonder_dew" / "magic_nut".
+# Все перечисленные ресурсы списываются ЗА ОДИН РАЗ при нажатии кнопки
+# "Повысить уровень" (см. level_up_panda) — только если хватает КАЖДОГО
+# из них.
+#
+# Резервы под названия ресурсов ЖЁСТКО ЗАФИКСИРОВАНЫ здесь и в
+# RESOURCE_EMOJI / RESOURCE_ORDER ниже — никогда не берутся из
+# пользовательского ввода, поэтому подстановка названия колонки прямо в
+# SQL (см. level_up_panda) безопасна.
+#
+# Уровень 2 настроен по ТЗ: 1000 кармы + 2 чудесного бамбука + 1 роса +
+# 1 волшебный орех. Остальные уровни (3-25) пока используют старую
+# кривую по чудесному бамбуку (см. историю: экспоненциальный рост,
+# сумма порогов 2..25 = 50000) — карму/росу/орех для них можно
+# донастроить позже, просто дописав нужные ключи в соответствующий
+# словарь ниже.
+PANDA_LEVEL_COST: dict[int, dict[str, int]] = {
+    2: {"karma": 1000, "wonder_bamboo": 2, "wonder_dew": 1, "magic_nut": 1},
+    3: {"wonder_bamboo": 3},
+    4: {"wonder_bamboo": 4},
+    5: {"wonder_bamboo": 6},
+    6: {"wonder_bamboo": 10},
+    7: {"wonder_bamboo": 14},
+    8: {"wonder_bamboo": 21},
+    9: {"wonder_bamboo": 31},
+    10: {"wonder_bamboo": 46},
+    11: {"wonder_bamboo": 68},
+    12: {"wonder_bamboo": 101},
+    13: {"wonder_bamboo": 149},
+    14: {"wonder_bamboo": 221},
+    15: {"wonder_bamboo": 327},
+    16: {"wonder_bamboo": 484},
+    17: {"wonder_bamboo": 716},
+    18: {"wonder_bamboo": 1060},
+    19: {"wonder_bamboo": 1568},
+    20: {"wonder_bamboo": 2321},
+    21: {"wonder_bamboo": 3436},
+    22: {"wonder_bamboo": 5085},
+    23: {"wonder_bamboo": 7525},
+    24: {"wonder_bamboo": 11137},
+    25: {"wonder_bamboo": 15665},
+}
+
+# Порядок отображения ресурсов на экране "Уровень" и в тостах — везде
+# фиксированный, не зависит от порядка ключей в PANDA_LEVEL_COST.
+RESOURCE_ORDER = ("karma", "wonder_bamboo", "wonder_dew", "magic_nut")
+RESOURCE_EMOJI = {
+    "karma": "✨",
+    "wonder_bamboo": "🎋",
+    "wonder_dew": "💧",
+    "magic_nut": "🌰",
 }
 
 
@@ -310,13 +356,13 @@ def hunger_duration_multiplier(level: int) -> float:
     return 1 + fraction * (PANDA_LEVEL_HUNGER_BONUS_MAX_PERCENT / 100)
 
 
-def next_level_cost(level: int) -> int | None:
-    """Сколько чудесного бамбука нужно накопить в инвентаре, чтобы
-    вручную поднять уровень с level на level+1 — None, если панда уже
-    на максимальном (PANDA_LEVEL_MAX) уровне."""
+def next_level_cost(level: int) -> dict[str, int] | None:
+    """Сколько каждого ресурса нужно накопить в инвентаре, чтобы вручную
+    поднять уровень с level на level+1 (словарь {ресурс: количество}) —
+    None, если панда уже на максимальном (PANDA_LEVEL_MAX) уровне."""
     if level >= PANDA_LEVEL_MAX:
         return None
-    return PANDA_LEVEL_BAMBOO_COST[level + 1]
+    return PANDA_LEVEL_COST[level + 1]
 
 
 # --- "Дерево чудес" (клик-механика, см. click_wonder_tree) ---
@@ -553,8 +599,12 @@ TEXTS = {
         "level_progress_line": "{have}/{need}",
         "level_max_line": "🏆 <b>Достигнут максимальный уровень!</b>",
         "level_have_line": "В инвентаре: {have} 🎋",
+        "res_name_karma": "Карма",
+        "res_name_wonder_bamboo": "Чудесный бамбук",
+        "res_name_wonder_dew": "Роса",
+        "res_name_magic_nut": "Волшебный орех",
         "level_up_button": "🔼 Повысить уровень",
-        "level_insufficient_toast": "Недостаточно чудесного бамбука — нужно ещё {need} 🎋.",
+        "level_insufficient_toast": "Недостаточно ресурсов — нужно ещё: {need}.",
         "level_up_toast": "🎉 Уровень повышен!",
         "level_up_message": (
             "🎉 <i>Панда достигла <b>{level}</b> уровня! Теперь голод длится "
@@ -650,8 +700,12 @@ TEXTS = {
         "level_progress_line": "{have}/{need}",
         "level_max_line": "🏆 <b>Maximum level reached!</b>",
         "level_have_line": "In inventory: {have} 🎋",
+        "res_name_karma": "Karma",
+        "res_name_wonder_bamboo": "Wonder bamboo",
+        "res_name_wonder_dew": "Dew",
+        "res_name_magic_nut": "Magic nut",
         "level_up_button": "🔼 Level up",
-        "level_insufficient_toast": "Not enough wonder bamboo — need {need} 🎋 more.",
+        "level_insufficient_toast": "Not enough resources — need: {need}.",
         "level_up_toast": "🎉 Level up!",
         "level_up_message": (
             "🎉 <i>The panda reached level <b>{level}</b>! Hunger now lasts "
@@ -1024,31 +1078,45 @@ async def click_wonder_tree(user_id: int) -> tuple[aiosqlite.Row, str, int]:
 
 async def level_up_panda(user_id: int) -> tuple[aiosqlite.Row, bool]:
     """Пытается вручную поднять панду на следующий уровень: списывает
-    next_level_cost(текущий_уровень) чудесного бамбука из инвентаря и
-    инкрементирует level — но только если бамбука хватает и панда ещё
-    не на максимальном (PANDA_LEVEL_MAX) уровне. Голод не трогает —
-    новый множитель длительности фаз (hunger_duration_multiplier)
-    применится начиная со следующей полной переброски фаз, то есть со
-    следующего feed_panda, а не задним числом к уже идущему циклу.
+    ВСЕ ресурсы из next_level_cost(текущий_уровень) (карма/бамбук/роса/
+    орех — какие есть в стоимости этого уровня) из инвентаря и
+    инкрементирует level — но только если хватает КАЖДОГО из них и
+    панда ещё не на максимальном (PANDA_LEVEL_MAX) уровне. Голод не
+    трогает — новый множитель длительности фаз
+    (hunger_duration_multiplier) применится начиная со следующей полной
+    переброски фаз, то есть со следующего feed_panda, а не задним
+    числом к уже идущему циклу.
 
-    Возвращает (row, поднялся_ли_уровень). Если бамбука не хватило или
+    Возвращает (row, поднялся_ли_уровень). Если чего-то не хватило или
     уровень уже максимальный — row не меняется, False."""
     async with database.user_lock(user_id):
         db = await database.get_db()
         row = await _fetch_row(db, user_id)
 
         cost = next_level_cost(row["level"])
-        if cost is None or row["wonder_bamboo"] < cost:
+        if cost is None or any(row[res] < amount for res, amount in cost.items()):
             return row, False
 
+        # Названия ресурсов (res) берутся только из фиксированного
+        # PANDA_LEVEL_COST/RESOURCE_ORDER выше, никогда из
+        # пользовательского ввода — подстановка в SQL безопасна (см.
+        # аналогичный комментарий у click_wonder_tree).
+        set_clauses = ["level = level + 1"]
+        params: list[int] = []
+        for res, amount in cost.items():
+            set_clauses.append(f"{res} = {res} - ?")
+            params.append(amount)
+        if "wonder_bamboo" in cost:
+            # Исторический счётчик суммарно потраченного бамбука на
+            # уровни (см. database.py: PANDA_COLUMNS["wonder_bamboo_fed"])
+            # — растёт только на потраченный именно бамбук.
+            set_clauses.append("wonder_bamboo_fed = wonder_bamboo_fed + ?")
+            params.append(cost["wonder_bamboo"])
+        params.append(user_id)
+
         await db.execute(
-            """
-            UPDATE panda
-            SET wonder_bamboo = wonder_bamboo - ?, wonder_bamboo_fed = wonder_bamboo_fed + ?,
-                level = level + 1
-            WHERE user_id = ?
-            """,
-            (cost, cost, user_id),
+            f"UPDATE panda SET {', '.join(set_clauses)} WHERE user_id = ?",
+            params,
         )
         await database.commit()
         return await _fetch_row(db, user_id), True
@@ -1386,13 +1454,14 @@ def _build_panda_view(lang: str, row: aiosqlite.Row) -> tuple[str, object]:
 
 
 def _build_level_view(lang: str, row: aiosqlite.Row) -> tuple[str, object]:
-    """Экран "Уровень": текущий уровень, шкала прогресса накопленного
-    бамбука к следующему уровню и кнопка ручного повышения (см.
-    level_up_panda). На максимальном (PANDA_LEVEL_MAX) уровне кнопки
-    повышения нет — только поздравительная строка."""
+    """Экран "Уровень": текущий уровень, по одной шкале прогресса на
+    каждый нужный для следующего уровня ресурс (карма/бамбук/роса/орех
+    — какие есть в стоимости этого уровня, см. PANDA_LEVEL_COST) и
+    кнопка ручного повышения (см. level_up_panda). На максимальном
+    (PANDA_LEVEL_MAX) уровне кнопки повышения нет — только
+    поздравительная строка."""
     t = TEXTS[lang]
     level = row["level"]
-    have = row["wonder_bamboo"]
     bonus_now = round((hunger_duration_multiplier(level) - 1) * 100)
     cost = next_level_cost(level)
 
@@ -1408,13 +1477,23 @@ def _build_level_view(lang: str, row: aiosqlite.Row) -> tuple[str, object]:
     if cost is None:
         lines.append(t["level_max_line"])
     else:
-        have_capped = min(have, cost)
-        percent = have_capped / cost * 100 if cost else 100
-        lines.extend([
-            t["level_next_line"].format(level=level + 1),
-            f"<b>{_render_bar(percent)}</b>",
-            f"<b>{t['level_progress_line'].format(have=have, need=cost)} 🎋</b>",
-        ])
+        lines.append(t["level_next_line"].format(level=level + 1))
+        for res in RESOURCE_ORDER:
+            need = cost.get(res)
+            if not need:
+                continue
+            have = row[res]
+            have_capped = min(have, need)
+            percent = have_capped / need * 100 if need else 100
+            emoji = RESOURCE_EMOJI[res]
+            lines.extend([
+                f"{emoji} {t[f'res_name_{res}']}",
+                f"<b>{_render_bar(percent)}</b>",
+                f"<b>{t['level_progress_line'].format(have=have, need=need)}</b>",
+                "",
+            ])
+        if lines and lines[-1] == "":
+            lines.pop()
         builder.button(text=t["level_up_button"], callback_data="panda:level_up", style="primary")
 
     builder.button(text=t["back_button"], callback_data="panda:level_back", style="primary")
@@ -2369,10 +2448,11 @@ async def on_open_level(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data == "panda:level_up")
 async def on_level_up(callback: CallbackQuery, state: FSMContext) -> None:
-    """Ручное повышение уровня — списывает нужное количество чудесного
-    бамбука из инвентаря (см. level_up_panda). Прокачка НЕ автоматическая:
-    срабатывает только по нажатию этой кнопки, и только если бамбука
-    в инвентаре хватает на next_level_cost(текущий_уровень)."""
+    """Ручное повышение уровня — списывает все нужные ресурсы (карма/
+    бамбук/роса/орех — какие есть в стоимости) из инвентаря (см.
+    level_up_panda). Прокачка НЕ автоматическая: срабатывает только по
+    нажатию этой кнопки, и только если в инвентаре хватает КАЖДОГО
+    ресурса из next_level_cost(текущий_уровень)."""
     lang = await _get_lang(state, callback.from_user.id)
     t = TEXTS[lang]
     user_id = callback.from_user.id
@@ -2382,8 +2462,18 @@ async def on_level_up(callback: CallbackQuery, state: FSMContext) -> None:
     if not leveled_up:
         cost = next_level_cost(row["level"])
         if cost is not None:
-            need = max(0, cost - row["wonder_bamboo"])
-            await callback.answer(t["level_insufficient_toast"].format(need=need), show_alert=True)
+            missing = [
+                f"{max(0, amount - row[res])} {RESOURCE_EMOJI[res]}"
+                for res, amount in cost.items()
+                if row[res] < amount
+            ]
+            if missing:
+                await callback.answer(
+                    t["level_insufficient_toast"].format(need=", ".join(missing)),
+                    show_alert=True,
+                )
+            else:
+                await callback.answer()
         else:
             await callback.answer()
         return
