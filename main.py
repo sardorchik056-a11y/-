@@ -1021,12 +1021,17 @@ async def process_language(callback: CallbackQuery, state: FSMContext):
 
     t = TEXTS[lang]
 
+    # Сначала гасим "часики" на кнопке (это мгновенно), и только потом
+    # редактируем сообщение — само редактирование это отдельный сетевой
+    # запрос к Telegram, и пока callback.answer() не вызван, кнопка у
+    # пользователя продолжает крутить индикатор загрузки, из-за чего
+    # кажется, что бот "долго думает".
+    await callback.answer()
     await update_message(
         callback,
         t["choose_gender"],
         reply_markup=gender_keyboard(lang),
     )
-    await callback.answer()
 
 
 @router.callback_query(Onboarding.choosing_gender, F.data.startswith("gender:"))
@@ -1040,12 +1045,14 @@ async def process_gender(callback: CallbackQuery, state: FSMContext):
 
     t = TEXTS[lang]
 
+    # См. комментарий в process_language выше — answer() до edit-запроса,
+    # а не после.
+    await callback.answer()
     await update_message(
         callback,
         t["final_message"],
         reply_markup=guide_keyboard(lang),
     )
-    await callback.answer()
 
     # Реферальная награда (prof.py, раздел "Друзья") — начисляется
     # тому, кто пригласил этого игрока, ровно в момент, когда игрок
@@ -1103,6 +1110,18 @@ async def main():
     # bot.db, и делят одно соединение) — создаём схему один раз,
     # до начала polling'а.
     await database.init_db()
+
+    # Ленивые ALTER TABLE-миграции для "общих" ачивок и кристаллов
+    # (prof.py: _ensure_general_achv_schema/_ensure_gift_schema) раньше
+    # выполнялись только при первом обращении — то есть на первом же
+    # апдейте после рестарта бота (LoginStreakMiddleware срабатывает на
+    # КАЖДЫЙ апдейт, включая нажатие инлайн-кнопки выбора языка). Из-за
+    # нескольких последовательных ALTER TABLE + отдельных синхронных
+    # commit() это выглядело как "бот долго думает" именно на первом
+    # действии игрока сразу после рестарта. Прогоняем миграции здесь,
+    # до старта polling'а, чтобы к первому реальному апдейту всё уже
+    # было готово.
+    await prof.ensure_startup_schema()
 
     # Кристаллы (премиальная валюта) — общий баланс для донатов
     # (donate.py), выдачи из админки (admin.py) и покупки скинов
