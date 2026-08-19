@@ -1216,6 +1216,18 @@ async def get_login_streak(user_id: int) -> int:
     return row["login_streak_count"] if row and row["login_streak_count"] is not None else 0
 
 
+async def ensure_startup_schema() -> None:
+    """Прогоняет ленивые ALTER TABLE-миграции (кристаллы + счётчики
+    "общих" ачивок) один раз при старте бота — см. вызов в main.py:main().
+    Раньше это происходило лениво при первом обращении к БД, а первым
+    таким обращением почти всегда оказывалось самое первое нажатие
+    инлайн-кнопки игроком (LoginStreakMiddleware срабатывает на каждый
+    апдейт), из-за чего именно это первое действие после рестарта бота
+    выглядело как заметное "зависание"."""
+    await _ensure_gift_schema()
+    await _ensure_general_achv_schema()
+
+
 LOGIN_STREAK_THRESHOLDS = [
     (7, "general_login_streak_7"),
     (30, "general_login_streak_30"),
