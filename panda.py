@@ -40,10 +40,15 @@
     import panda
     dp.include_router(panda.router)
     # Один раз при старте, до включения роутера (или сразу после) —
-    # лениво создаёт panda_notify_state и panda_achv_state, если их
-    # ещё нет:
+    # лениво создаёт panda_notify_state, panda_achv_state и
+    # panda_penalty_state, если их ещё нет:
     await panda.ensure_notify_table()
     await panda.ensure_achv_state_table()
+    await panda.ensure_penalty_state_table()
+    # Фоновый цикл push-уведомлений "покормите/приласкайте панду" —
+    # уже подключается отдельной задачей (см. main.py: main()). Штраф
+    # за голодающую на 0% панду — отдельный, более частый фоновый цикл:
+    #     asyncio.create_task(panda.start_penalty_loop(bot))
 
 Зависимость:
     pip install aiosqlite --break-system-packages
@@ -294,6 +299,36 @@ NOTIFY_INTERVAL_SECONDS = 2 * 3600  # раз в 2 часа
 NOTIFY_HUNGER_THRESHOLD = 50   # присылаем, если голод ниже 50%
 NOTIFY_MOOD_THRESHOLD = 25     # присылаем, если настроение ниже 25%
 
+# --- штраф за голодающую панду (голод держится на 0%) ---
+# Если панда непрерывно голодает на 0% HUNGER_ZERO_PENALTY_START_HOURS
+# часов подряд — начинается штраф HUNGER_ZERO_PENALTY_AMOUNT Pn, и
+# затем повторяется каждые HUNGER_ZERO_PENALTY_INTERVAL_HOURS час,
+# пока голод так и остаётся на 0% (панду не покормили). До первого
+# штрафа игрок получает два предупреждения — в моменты
+# HUNGER_ZERO_WARNING_HOURS часов непрерывного голода на 0% (то есть
+# за 2 и за 1 час до первого штрафа).
+#
+# Момент, когда голод падает до 0%, не хранится отдельной меткой в
+# БД — он и так однозначно считается по формуле голода (см.
+# calc_hunger_percent/_hunger_percent_to_elapsed):
+#   t_zero = last_fed_at + hunger_phase1_seconds + hunger_phase2_seconds
+# Дальше "сколько часов панда уже голодает на 0%" — просто
+# (now - t_zero) / 3600, чистая функция времени, как и всё остальное
+# в этом модуле (см. докстринг файла). Реальное состояние (какие
+# предупреждения уже отправлены, сколько штрафных "тиков" уже списано
+# за текущий цикл голода) хранится в panda_penalty_state — см. ниже.
+HUNGER_ZERO_WARNING_HOURS = (3, 4)      # 2-е и 1-е предупреждение
+HUNGER_ZERO_PENALTY_START_HOURS = 5     # первый штраф — после 5ч на 0%
+HUNGER_ZERO_PENALTY_INTERVAL_HOURS = 1  # затем штраф каждый час
+HUNGER_ZERO_PENALTY_AMOUNT = 1000
+# Проверяем заметно чаще, чем общий NOTIFY_INTERVAL_SECONDS (2 часа) —
+# иначе часовые пороги предупреждений/штрафа срабатывали бы с
+# опозданием до двух часов. Пропущенные из-за паузы бота пороги всё
+# равно не теряются (см. _check_and_penalize_one — досчитывает по
+# факту прошедшего времени), но короткий интервал даёт предупреждениям
+# и штрафу приходить вовремя при обычной работе бота.
+PENALTY_CHECK_INTERVAL_SECONDS = 15 * 60  # раз в 15 минут
+
 # --- поглаживание ---
 PET_MOOD_GAIN = 5
 PET_FRIEND_GAIN = 3
@@ -433,6 +468,14 @@ TEXTS = {
         "currency_word_crystals": "🎁 кристаллов",
         "skin_equipped_toast": "✔️ Скин надет!",
         "skin_unequipped_toast": "Скин снят, панда вернулась к обычному виду.",
+        "penalty_warning": (
+            "⚠️ <i>Панда уже {hours} ч. голодает на 0%! Если не покормить, "
+            "через {hours_left} ч. спишется штраф {amount} {currency}.</i>"
+        ),
+        "penalty_applied": (
+            "💸 <i>Штраф за голодающую панду: −{amount} {currency}. "
+            "Покормите её скорее, иначе штраф будет повторяться каждый час!</i>"
+        ),
     },
     "en": {
         "default_title": f"{NAME_EMOJI} <b>My panda</b>",
@@ -493,6 +536,14 @@ TEXTS = {
         "currency_word_crystals": "🎁 crystals",
         "skin_equipped_toast": "✔️ Skin equipped!",
         "skin_unequipped_toast": "Skin removed, the panda is back to normal.",
+        "penalty_warning": (
+            "⚠️ <i>The panda has been starving at 0% for {hours}h! If not fed, "
+            "a {amount} {currency} penalty will be charged in {hours_left}h.</i>"
+        ),
+        "penalty_applied": (
+            "💸 <i>Penalty for a starving panda: −{amount} {currency}. "
+            "Feed it soon, or the penalty will repeat every hour!</i>"
+        ),
     },
 }
 
@@ -1421,6 +1472,193 @@ async def start_notify_loop(bot) -> None:
         except Exception:
             logger.exception("panda notify: loop iteration failed")
         await asyncio.sleep(NOTIFY_INTERVAL_SECONDS)
+
+
+# ==========================
+#   ШТРАФ ЗА ГОЛОДАЮЩУЮ ПАНДУ (голод держится на 0%)
+# ==========================
+# См. константы HUNGER_ZERO_* выше. Своей таблицы под это в database.py
+# нет — заводим лениво (IF NOT EXISTS), по аналогии с
+# panda_notify_state/panda_achv_state. ensure_penalty_state_table()
+# вызывается один раз при старте бота, см. main.py: main().
+#
+# cycle_fed_at — last_fed_at панды на момент последней обработанной
+# проверки: как только реальный last_fed_at меняется (панду покормили —
+# feed_panda/restore_hunger сдвигают last_fed_at вперёд), это значит
+# начался новый "цикл голода", и warned_stage/penalty_ticks_applied
+# сбрасываются — иначе после следующего падения голода до 0% штраф
+#(или его часть предупреждений) не сработал бы заново.
+# warned_stage — сколько из HUNGER_ZERO_WARNING_HOURS предупреждений
+# уже отправлено в текущем цикле (0, 1 или 2).
+# penalty_ticks_applied — сколько штрafных "тиков" по
+# HUNGER_ZERO_PENALTY_AMOUNT уже списано в текущем цикле голода.
+
+async def ensure_penalty_state_table() -> None:
+    db = await database.get_db()
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS panda_penalty_state (
+            user_id INTEGER PRIMARY KEY,
+            cycle_fed_at REAL NOT NULL DEFAULT 0,
+            warned_stage INTEGER NOT NULL DEFAULT 0,
+            penalty_ticks_applied INTEGER NOT NULL DEFAULT 0
+        )
+        """
+    )
+    await database.commit()
+
+
+async def _get_penalty_state(user_id: int) -> tuple[float, int, int]:
+    db = await database.get_db()
+    async with db.execute(
+        "SELECT cycle_fed_at, warned_stage, penalty_ticks_applied "
+        "FROM panda_penalty_state WHERE user_id = ?",
+        (user_id,),
+    ) as cursor:
+        row = await cursor.fetchone()
+    if row is None:
+        return 0.0, 0, 0
+    return row["cycle_fed_at"], row["warned_stage"], row["penalty_ticks_applied"]
+
+
+async def _set_penalty_state(
+    user_id: int, cycle_fed_at: float, warned_stage: int, penalty_ticks_applied: int
+) -> None:
+    db = await database.get_db()
+    await db.execute(
+        """
+        INSERT INTO panda_penalty_state
+            (user_id, cycle_fed_at, warned_stage, penalty_ticks_applied)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            cycle_fed_at = excluded.cycle_fed_at,
+            warned_stage = excluded.warned_stage,
+            penalty_ticks_applied = excluded.penalty_ticks_applied
+        """,
+        (user_id, cycle_fed_at, warned_stage, penalty_ticks_applied),
+    )
+
+
+async def _check_and_penalize_one(bot, user_id: int) -> None:
+    """Проверяет одного игрока: если панда голодает на 0% достаточно
+    долго — шлёт предупреждение(я) и/или списывает штраф. Считает всё
+    по факту прошедшего времени (см. комментарий к константам выше),
+    поэтому корректно "досчитывает" пропущенные пороги, даже если бот
+    какое-то время не работал или проверка запоздала."""
+    async with database.user_lock(user_id):
+        row = await _settle_locked(user_id)
+
+        cycle_fed_at, warned_stage, ticks_applied = await _get_penalty_state(user_id)
+        is_new_cycle = row["last_fed_at"] != cycle_fed_at
+        if is_new_cycle:
+            # Панду покормили после прошлой проверки (или это вообще
+            # первая проверка) — начинается новый цикл голода, старые
+            # предупреждения/штрафы к нему не относятся.
+            cycle_fed_at, warned_stage, ticks_applied = row["last_fed_at"], 0, 0
+
+        t_zero = cycle_fed_at + row["hunger_phase1_seconds"] + row["hunger_phase2_seconds"]
+        now = time.time()
+
+        if now <= t_zero:
+            # Голод ещё выше 0% — штрафовать/предупреждать нечего.
+            # Сохраняем только если только что произошёл сброс цикла.
+            if is_new_cycle:
+                await _set_penalty_state(user_id, cycle_fed_at, warned_stage, ticks_applied)
+                await database.commit()
+            return
+
+        elapsed_hours = (now - t_zero) / 3600
+
+        onboarding = await database.get_onboarding(user_id)
+        lang = (onboarding["lang"] if onboarding else None) or "ru"
+        t = TEXTS[lang]
+
+        # Предупреждения — по одному разу за цикл каждое, в порядке
+        # возрастания HUNGER_ZERO_WARNING_HOURS.
+        for stage, warn_hour in enumerate(HUNGER_ZERO_WARNING_HOURS, start=1):
+            if warned_stage >= stage or elapsed_hours < warn_hour:
+                continue
+            hours_left = max(0, HUNGER_ZERO_PENALTY_START_HOURS - warn_hour)
+            try:
+                await bot.send_message(
+                    user_id,
+                    t["penalty_warning"].format(
+                        hours=warn_hour,
+                        hours_left=hours_left,
+                        amount=HUNGER_ZERO_PENALTY_AMOUNT,
+                        currency=shop.CURRENCY,
+                    ),
+                )
+            except Exception:
+                logger.warning("panda penalty: failed to warn user %s", user_id, exc_info=True)
+            warned_stage = stage
+
+        # Штраф — начиная с HUNGER_ZERO_PENALTY_START_HOURS часов на 0%,
+        # затем ещё по разу за каждый следующий полный
+        # HUNGER_ZERO_PENALTY_INTERVAL_HOURS час, пока голод остаётся
+        # на 0%. due_ticks — сколько штрафов ДОЛЖНО было накопиться к
+        # этому моменту; если бот проверял реже (или был выключен) и
+        # пропустил несколько часовых порогов подряд, недостающее
+        # списывается одной суммой при следующей проверке — деньги не
+        # "прощаются" из-за редких проверок.
+        if elapsed_hours >= HUNGER_ZERO_PENALTY_START_HOURS:
+            due_ticks = (
+                int((elapsed_hours - HUNGER_ZERO_PENALTY_START_HOURS) // HUNGER_ZERO_PENALTY_INTERVAL_HOURS)
+                + 1
+            )
+            missed_ticks = due_ticks - ticks_applied
+            if missed_ticks > 0:
+                owed = HUNGER_ZERO_PENALTY_AMOUNT * missed_ticks
+                balance = await shop.get_balance(user_id)
+                # Не уводим баланс в минус — если Pn не хватает на
+                # весь причитающийся штраф, списываем сколько есть.
+                charge = min(owed, balance)
+                if charge > 0:
+                    await shop._change_balance(user_id, -charge)
+                    # Экономическая операция (списание Pn) — сохраняем
+                    # немедленно, как и остальные такие операции в этом
+                    # модуле (см. buy_skin/set_panda_name выше).
+                    await database.flush()
+                    try:
+                        await bot.send_message(
+                            user_id,
+                            t["penalty_applied"].format(
+                                amount=charge, currency=shop.CURRENCY
+                            ),
+                        )
+                    except Exception:
+                        logger.warning(
+                            "panda penalty: failed to notify user %s", user_id, exc_info=True
+                        )
+                ticks_applied = due_ticks
+
+        await _set_penalty_state(user_id, cycle_fed_at, warned_stage, ticks_applied)
+        await database.commit()
+
+
+async def check_and_penalize(bot) -> None:
+    """Один проход фоновой проверки штрафа — по всем игрокам, у кого
+    вообще есть панда."""
+    for user_id in await _get_all_panda_user_ids():
+        try:
+            await _check_and_penalize_one(bot, user_id)
+        except Exception:
+            logger.exception("panda penalty: error checking user %s", user_id)
+
+
+async def start_penalty_loop(bot) -> None:
+    """Фоновый цикл: раз в PENALTY_CHECK_INTERVAL_SECONDS проверяет
+    всех игроков и штрафует тех, чья панда достаточно долго голодает
+    на 0% (с двумя предупреждениями до первого штрафа — см. константы
+    HUNGER_ZERO_* выше). Запускается один раз при старте бота как
+    отдельная asyncio-задача, см. main.py: main()
+    (asyncio.create_task(panda.start_penalty_loop(bot)))."""
+    while True:
+        try:
+            await check_and_penalize(bot)
+        except Exception:
+            logger.exception("panda penalty: loop iteration failed")
+        await asyncio.sleep(PENALTY_CHECK_INTERVAL_SECONDS)
 
 
 # ==========================
