@@ -88,6 +88,20 @@ PANDA_COLUMNS = {
     # (PANDA_STICKER_ID / PANDA_STICKER_ID_ADULT). Сам факт покупки
     # скина хранится отдельно, в таблице panda_skins ниже.
     "equipped_skin_id": "TEXT",
+    # Уровень панды (1-25, см. panda.py: PANDA_LEVEL_MAX). Влияет на
+    # длительность обеих фаз голода (hunger_duration_multiplier) — чем
+    # выше уровень, тем дольше панда не голодает (вплоть до +300% на 25).
+    "level": "INTEGER NOT NULL DEFAULT 1",
+    # Сколько единиц чудесного бамбука скормлено панде за всё время —
+    # именно от этого суммарного числа считается level (см.
+    # level_from_total_bamboo/PANDA_LEVEL_BAMBOO_CUMULATIVE в panda.py),
+    # а не от инвентаря ниже. Никогда не уменьшается.
+    "wonder_bamboo_fed": "INTEGER NOT NULL DEFAULT 0",
+    # Сколько чудесного бамбука сейчас в инвентаре (ещё не скормлено).
+    # Способ добычи бамбука пока нигде не реализован в боте — это
+    # заготовка под будущий источник (сад/события/донат), см.
+    # panda.py: add_wonder_bamboo.
+    "wonder_bamboo": "INTEGER NOT NULL DEFAULT 0",
 }
 
 # --- garden.py ---
