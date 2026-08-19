@@ -270,6 +270,71 @@ HUNGER_PHASE2_MIN_SECONDS = 2 * 3600  # 2 ч
 HUNGER_PHASE2_MAX_SECONDS = 4 * 3600  # 4 ч
 HUNGER_LOW_THRESHOLD = 50  # ниже этого % начинают падать настроение и дружба
 
+# --- уровни панды (1-25) ---
+# Прокачиваются скармливанием специальной еды — чудесного бамбука (см.
+# feed_wonder_bamboo). Способ ДОБЫТЬ сам бамбук пока нигде не
+# реализован (сад/события/донат — задел на будущее, см.
+# add_wonder_bamboo) — сейчас есть только сам механизм прокачки.
+#
+# Чем выше уровень — тем дольше длятся обе фазы голода (см.
+# hunger_duration_multiplier): линейно от +0% на 1 уровне до +300% на
+# 25-м, т.е. на максимуме голод в 4 раза "медленнее".
+PANDA_LEVEL_MAX = 25
+PANDA_LEVEL_HUNGER_BONUS_MAX_PERCENT = 300
+
+# Сколько чудесного бамбука нужно скормить, чтобы перейти НА данный
+# уровень (ключ — уровень, на который переходим). Кривая растёт по
+# экспоненте (быстрее в конце), сумма всех порогов 2..25 — ровно 50000
+# (запрошенный игроком тотал на 25 уровень).
+PANDA_LEVEL_BAMBOO_COST = {
+    2: 2, 3: 3, 4: 4, 5: 6, 6: 10, 7: 14, 8: 21, 9: 31, 10: 46,
+    11: 68, 12: 101, 13: 149, 14: 221, 15: 327, 16: 484, 17: 716,
+    18: 1060, 19: 1568, 20: 2321, 21: 3436, 22: 5085, 23: 7525,
+    24: 11137, 25: 15665,
+}
+
+# Кумулятивные пороги (сколько бамбука нужно скормить СУММАРНО за всё
+# время, чтобы быть на данном уровне) — считаются один раз при импорте.
+PANDA_LEVEL_BAMBOO_CUMULATIVE: dict[int, int] = {}
+_bamboo_total = 0
+for _level in range(2, PANDA_LEVEL_MAX + 1):
+    _bamboo_total += PANDA_LEVEL_BAMBOO_COST[_level]
+    PANDA_LEVEL_BAMBOO_CUMULATIVE[_level] = _bamboo_total
+del _bamboo_total, _level
+
+
+def hunger_duration_multiplier(level: int) -> float:
+    """Во сколько раз длиннее обе фазы голода на данном уровне: 1.0 на
+    1 уровне, 4.0 (т.е. +300%) на 25-м — линейно между ними."""
+    level = max(1, min(PANDA_LEVEL_MAX, level))
+    fraction = (level - 1) / (PANDA_LEVEL_MAX - 1)
+    return 1 + fraction * (PANDA_LEVEL_HUNGER_BONUS_MAX_PERCENT / 100)
+
+
+def level_from_total_bamboo(total_fed: int) -> int:
+    """Уровень панды по суммарно скормленному чудесному бамбуку за всё
+    время (row["wonder_bamboo_fed"]), а не по текущему инвентарю."""
+    level = 1
+    for lvl in range(2, PANDA_LEVEL_MAX + 1):
+        if total_fed >= PANDA_LEVEL_BAMBOO_CUMULATIVE[lvl]:
+            level = lvl
+        else:
+            break
+    return level
+
+
+def bamboo_progress_to_next_level(total_fed: int) -> tuple[int, int, int] | None:
+    """(накоплено, порог_след_уровня, сколько_ещё_нужно) относительно
+    начала текущего уровня — либо None, если уже 25 уровень (максимум)."""
+    level = level_from_total_bamboo(total_fed)
+    if level >= PANDA_LEVEL_MAX:
+        return None
+    prev_threshold = PANDA_LEVEL_BAMBOO_CUMULATIVE.get(level, 0)
+    next_threshold = PANDA_LEVEL_BAMBOO_CUMULATIVE[level + 1]
+    progress = total_fed - prev_threshold
+    need = next_threshold - total_fed
+    return progress, next_threshold - prev_threshold, need
+
 # --- настроение и дружба (падают, пока голод < HUNGER_LOW_THRESHOLD) ---
 # Тик — раз в 10-15 реальных минут. Поскольку эффект должен считаться
 # "лениво" по одним лишь таймстампам (без фоновых задач), берём
@@ -414,6 +479,10 @@ TEXTS = {
         "named_title": f"{NAME_EMOJI} <b>{{name}}</b>",
         "age_label": f"{AGE_EMOJI} <b>Возраст</b>",
         "age_value": "{days} дн. {hours} ч.",
+        "level_label": "🎋 <b>Уровень</b>",
+        "level_value": "{level}/25",
+        "level_progress_value": " · {progress}/{threshold} 🎋 до след. уровня",
+        "level_max_value": " · максимальный уровень!",
         "hunger_label": "🍖 <b>Голод</b>",
         "mood_label": f"{MOOD_EMOJI} <b>Настроение</b>",
         "friendship_label": f"{FRIEND_EMOJI} <b>Дружба</b>",
@@ -439,8 +508,16 @@ TEXTS = {
         "rename_cancelled": "<i>Переименование отменено.</i>",
         "feed_choice_title": "🧺 <b>Чем покормить панду?</b>\n<i>Выберите что-нибудь из корзины сада или витрины пекарни.</i>",
         "feed_item_button": "{emoji} {name} ×{count}",
+        "bamboo_name": "Чудесный бамбук",
+        "bamboo_emoji": "🎋",
+        "feed_item_bamboo_button": "🎋 {name} ×{count} (уровень)",
         "back_button": "◀️ Назад",
         "fed_toast": "{emoji} {name} — голод +{restore}%! 🍖",
+        "fed_bamboo_toast": "🎋 Чудесный бамбук скормлен!",
+        "level_up_message": (
+            "🎉 <i>Панда достигла <b>{level}</b> уровня! Теперь голод длится "
+            "дольше — она сможет обходиться без еды примерно на {bonus}% дольше, чем на 1 уровне.</i>"
+        ),
         "already_full_toast": "Панда пока сыта, рано кормить.",
         "empty_basket_toast": "🧺 Нет запасов на корм — соберите фрукты в саду или испеките что-нибудь в пекарне.",
         "pet_toast": "Панде приятно! 🤗",
@@ -482,6 +559,10 @@ TEXTS = {
         "named_title": f"{NAME_EMOJI} <b>{{name}}</b>",
         "age_label": f"{AGE_EMOJI} <b>Age</b>",
         "age_value": "{days}d {hours}h",
+        "level_label": "🎋 <b>Level</b>",
+        "level_value": "{level}/25",
+        "level_progress_value": " · {progress}/{threshold} 🎋 to next level",
+        "level_max_value": " · max level!",
         "hunger_label": "🍖 <b>Hunger</b>",
         "mood_label": f"{MOOD_EMOJI} <b>Mood</b>",
         "friendship_label": f"{FRIEND_EMOJI} <b>Friendship</b>",
@@ -507,8 +588,16 @@ TEXTS = {
         "rename_cancelled": "<i>Renaming cancelled.</i>",
         "feed_choice_title": "🧺 <b>What should the panda eat?</b>\n<i>Pick something from the garden basket or the bakery showcase.</i>",
         "feed_item_button": "{emoji} {name} ×{count}",
+        "bamboo_name": "Wonder bamboo",
+        "bamboo_emoji": "🎋",
+        "feed_item_bamboo_button": "🎋 {name} ×{count} (level)",
         "back_button": "◀️ Back",
         "fed_toast": "{emoji} {name} — hunger +{restore}%! 🍖",
+        "fed_bamboo_toast": "🎋 Wonder bamboo fed!",
+        "level_up_message": (
+            "🎉 <i>The panda reached level <b>{level}</b>! Hunger now lasts "
+            "longer — it can go without food about {bonus}% longer than at level 1.</i>"
+        ),
         "already_full_toast": "The panda is still full, too early to feed.",
         "empty_basket_toast": "🧺 Nothing to feed it with — pick some fruit in the garden or bake something first.",
         "pet_toast": "The panda enjoys it! 🤗",
@@ -606,12 +695,16 @@ def calc_age_days(created_at: float, now: float) -> float:
     return real_days_elapsed * PANDA_DAYS_PER_REAL_DAY
 
 
-def _roll_hunger_phases() -> tuple[float, float]:
+def _roll_hunger_phases(level: int = 1) -> tuple[float, float]:
     """Случайно выбирает длительности двух фаз голода нового цикла
-    кормления: HUNGER_PHASE1_* (100%->50%) и HUNGER_PHASE2_* (50%->0%)."""
+    кормления: HUNGER_PHASE1_* (100%->50%) и HUNGER_PHASE2_* (50%->0%),
+    затем растягивает обе на hunger_duration_multiplier(level) — более
+    высокий уровень панды (см. PANDA_LEVEL_* выше) держит её сытой
+    дольше."""
     phase1 = random.uniform(HUNGER_PHASE1_MIN_SECONDS, HUNGER_PHASE1_MAX_SECONDS)
     phase2 = random.uniform(HUNGER_PHASE2_MIN_SECONDS, HUNGER_PHASE2_MAX_SECONDS)
-    return phase1, phase2
+    multiplier = hunger_duration_multiplier(level)
+    return phase1 * multiplier, phase2 * multiplier
 
 
 def calc_hunger_percent(
@@ -742,10 +835,10 @@ async def feed_panda(user_id: int) -> aiosqlite.Row:
     голод тиков и запускает новый цикл голода со свежими случайными
     длительностями фаз (30-50 мин до 50%, затем 2-4 ч до 0%)."""
     async with database.user_lock(user_id):
-        await _settle_locked(user_id)  # применяем то, что накопилось до кормления
+        row = await _settle_locked(user_id)  # применяем то, что накопилось до кормления
         db = await database.get_db()
         now = time.time()
-        phase1, phase2 = _roll_hunger_phases()
+        phase1, phase2 = _roll_hunger_phases(row["level"])
         await db.execute(
             """
             UPDATE panda
@@ -820,6 +913,63 @@ async def restore_hunger(user_id: int, percent: float) -> tuple[aiosqlite.Row, f
         )
         await database.commit()
         return await _fetch_row(db, user_id), new_hunger
+
+
+# ==========================
+#   ЧУДЕСНЫЙ БАМБУК / УРОВНИ ПАНДЫ
+# ==========================
+# Способ ДОБЫТЬ бамбук в инвентарь (garden/события/донат) пока нигде не
+# подключён — add_wonder_bamboo ниже это только заготовка на будущее.
+# Сам механизм прокачки (скормить бамбук -> проверить уровень) уже
+# рабочий, см. feed_wonder_bamboo.
+
+async def add_wonder_bamboo(user_id: int, amount: int) -> aiosqlite.Row:
+    """Начисляет чудесный бамбук в инвентарь панды. Пока не вызывается
+    ниоткуда в боте — задел под будущий источник добычи бамбука."""
+    async with database.user_lock(user_id):
+        await _get_or_create_panda_locked(user_id)
+        db = await database.get_db()
+        await db.execute(
+            "UPDATE panda SET wonder_bamboo = wonder_bamboo + ? WHERE user_id = ?",
+            (amount, user_id),
+        )
+        await database.commit()
+        return await _fetch_row(db, user_id)
+
+
+async def feed_wonder_bamboo(user_id: int) -> tuple[aiosqlite.Row, bool, bool, int]:
+    """Скармливает панде одну единицу чудесного бамбука из инвентаря
+    (если он есть) — в отличие от обычной еды, голод НЕ восстанавливает,
+    а идёт в счётчик row["wonder_bamboo_fed"], который определяет
+    уровень панды (см. level_from_total_bamboo). Новый множитель
+    длительности голода (hunger_duration_multiplier) применится начиная
+    со следующей полной переброски фаз — то есть со следующего
+    feed_panda, — а не задним числом к уже идущему циклу голода.
+
+    Возвращает (row, скормлен_ли_бамбук, поднялся_ли_уровень,
+    новый_уровень). Если бамбука в инвентаре не было — (row, False,
+    False, текущий_уровень) без изменений."""
+    async with database.user_lock(user_id):
+        db = await database.get_db()
+        row = await _fetch_row(db, user_id)
+
+        if row["wonder_bamboo"] <= 0:
+            return row, False, False, row["level"]
+
+        old_level = row["level"]
+        new_fed_total = row["wonder_bamboo_fed"] + 1
+        new_level = level_from_total_bamboo(new_fed_total)
+
+        await db.execute(
+            """
+            UPDATE panda
+            SET wonder_bamboo = wonder_bamboo - 1, wonder_bamboo_fed = ?, level = ?
+            WHERE user_id = ?
+            """,
+            (new_fed_total, new_level, user_id),
+        )
+        await database.commit()
+        return await _fetch_row(db, user_id), True, new_level > old_level, new_level
 
 
 async def pet_panda(user_id: int) -> tuple[bool, aiosqlite.Row, float]:
@@ -1102,10 +1252,19 @@ def _build_panda_view(lang: str, row: aiosqlite.Row) -> tuple[str, object]:
 
     title = t["named_title"].format(name=html.escape(row["name"])) if row["name"] else t["default_title"]
 
+    level = row["level"]
+    progress = bamboo_progress_to_next_level(row["wonder_bamboo_fed"])
+    if progress is None:
+        level_suffix = t["level_max_value"]
+    else:
+        prog_now, prog_threshold, _need = progress
+        level_suffix = t["level_progress_value"].format(progress=prog_now, threshold=prog_threshold)
+
     lines = [
         f"<b>{title}</b>",
         "<b><code>·  ·  ·  ◆  ·  ·  ·</code></b>",
         f"<b>{t['age_label']}: {t['age_value'].format(days=days, hours=hours)}</b>",
+        f"<b>{t['level_label']}: {t['level_value'].format(level=level)}</b>{level_suffix}",
         "",
         f"<b>{t['hunger_label']} {round(hunger)}%</b>",
         f"<b>{_render_bar(hunger)}</b>",
@@ -1152,43 +1311,59 @@ def _pick_sticker(row: aiosqlite.Row) -> str:
 
 
 def _build_feed_choice(
-    lang: str, fruit_inventory: dict[str, int], pantry_inventory: dict[str, int]
+    lang: str,
+    fruit_inventory: dict[str, int],
+    pantry_inventory: dict[str, int],
+    wonder_bamboo: int = 0,
+    hunger_full: bool = False,
 ) -> tuple[str, object]:
     """Экран выбора того, чем покормить панду — фрукты из корзины сада
     (garden.get_inventory / garden.CROPS) и готовая выпечка с витрины
     пекарни (bakery.get_pantry / bakery.RECIPES). Единственное место во
     всём боте, откуда панду можно покормить — раздел "Пекарня" сам по
-    себе больше не кормит напрямую."""
+    себе больше не кормит напрямую.
+
+    Чудесный бамбук (wonder_bamboo) голод не восстанавливает (см.
+    feed_wonder_bamboo), поэтому его кнопка показывается всегда, когда
+    он есть в инвентаре — даже если hunger_full=True и обычная еда
+    из-за этого скрыта."""
     t = TEXTS[lang]
     text = t["feed_choice_title"]
 
     builder = InlineKeyboardBuilder()
-    for cid in garden.CROP_ORDER:
-        count = fruit_inventory.get(cid, 0)
-        if count <= 0:
-            continue
-        crop = garden.CROPS[cid]
+    if not hunger_full:
+        for cid in garden.CROP_ORDER:
+            count = fruit_inventory.get(cid, 0)
+            if count <= 0:
+                continue
+            crop = garden.CROPS[cid]
+            builder.button(
+                text=t["feed_item_button"].format(
+                    emoji=crop["emoji"],
+                    name=crop["name"][lang],
+                    count=count,
+                ),
+                callback_data=f"panda:feed_item:crop:{cid}",
+                style="primary",
+            )
+        for rid in bakery.RECIPE_ORDER:
+            count = pantry_inventory.get(rid, 0)
+            if count <= 0:
+                continue
+            recipe = bakery.RECIPES[rid]
+            builder.button(
+                text=t["feed_item_button"].format(
+                    emoji=recipe["emoji"],
+                    name=recipe["name"][lang],
+                    count=count,
+                ),
+                callback_data=f"panda:feed_item:bakery:{rid}",
+                style="primary",
+            )
+    if wonder_bamboo > 0:
         builder.button(
-            text=t["feed_item_button"].format(
-                emoji=crop["emoji"],
-                name=crop["name"][lang],
-                count=count,
-            ),
-            callback_data=f"panda:feed_item:crop:{cid}",
-            style="primary",
-        )
-    for rid in bakery.RECIPE_ORDER:
-        count = pantry_inventory.get(rid, 0)
-        if count <= 0:
-            continue
-        recipe = bakery.RECIPES[rid]
-        builder.button(
-            text=t["feed_item_button"].format(
-                emoji=recipe["emoji"],
-                name=recipe["name"][lang],
-                count=count,
-            ),
-            callback_data=f"panda:feed_item:bakery:{rid}",
+            text=t["feed_item_bamboo_button"].format(name=t["bamboo_name"], count=wonder_bamboo),
+            callback_data="panda:feed_item:bamboo:wonder_bamboo",
             style="primary",
         )
     builder.button(text=t["back_button"], callback_data="panda:feed_back", style="primary")
@@ -1949,17 +2124,20 @@ async def on_feed_panda(callback: CallbackQuery, state: FSMContext) -> None:
     hunger_now = calc_hunger_percent(
         row["last_fed_at"], now, row["hunger_phase1_seconds"], row["hunger_phase2_seconds"]
     )
-    if hunger_now >= 100:
+    has_bamboo = row["wonder_bamboo"] > 0
+    hunger_full = hunger_now >= 100
+    if hunger_full and not has_bamboo:
         await callback.answer(t["already_full_toast"])
         return
 
     inventory = await garden.get_inventory(user_id)
     pantry = await bakery.get_pantry(user_id)
-    if not any(count > 0 for count in inventory.values()) and not any(count > 0 for count in pantry.values()):
+    has_food = any(count > 0 for count in inventory.values()) or any(count > 0 for count in pantry.values())
+    if not has_food and not has_bamboo:
         await callback.answer(t["empty_basket_toast"], show_alert=True)
         return
 
-    text, markup = _build_feed_choice(lang, inventory, pantry)
+    text, markup = _build_feed_choice(lang, inventory, pantry, row["wonder_bamboo"], hunger_full)
     await _safe_edit_text(callback.message, text, reply_markup=markup)
     await callback.answer()
 
@@ -1971,6 +2149,37 @@ async def on_feed_item(callback: CallbackQuery, state: FSMContext) -> None:
 
     _, _, item_type, item_id = callback.data.split(":")
     user_id = callback.from_user.id
+
+    if item_type == "bamboo":
+        row, fed, leveled_up, new_level = await feed_wonder_bamboo(user_id)
+        if not fed:
+            # Бамбук закончился (например, скормлен в параллельном
+            # запросе) — просто освежаем экран выбора актуальным составом.
+            await callback.answer(t["empty_basket_toast"])
+            row = await _settle(user_id)
+            inventory = await garden.get_inventory(user_id)
+            pantry = await bakery.get_pantry(user_id)
+            has_food = any(count > 0 for count in inventory.values()) or any(
+                count > 0 for count in pantry.values()
+            )
+            if has_food or row["wonder_bamboo"] > 0:
+                now = time.time()
+                hunger_full = calc_hunger_percent(
+                    row["last_fed_at"], now, row["hunger_phase1_seconds"], row["hunger_phase2_seconds"]
+                ) >= 100
+                text, markup = _build_feed_choice(lang, inventory, pantry, row["wonder_bamboo"], hunger_full)
+            else:
+                text, markup = _build_panda_view(lang, row)
+            await _safe_edit_text(callback.message, text, reply_markup=markup)
+            return
+
+        await callback.answer(t["fed_bamboo_toast"])
+        text, markup = _build_panda_view(lang, row)
+        await _safe_edit_text(callback.message, text, reply_markup=markup)
+        if leveled_up:
+            bonus = round((hunger_duration_multiplier(new_level) - 1) * 100)
+            await callback.message.answer(t["level_up_message"].format(level=new_level, bonus=bonus))
+        return
 
     if item_type == "crop":
         taken = await garden.take_from_basket(user_id, item_id)
