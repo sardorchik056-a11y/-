@@ -468,6 +468,17 @@ MOOD_EMOJI_ID = "5388790256772331442"
 FRIEND_EMOJI_ID = "5341581827385599962"
 PET_BUTTON_EMOJI_ID = "5224346382894115159"
 SETNAME_BUTTON_EMOJI_ID = "5372848794163486495"
+# Стрелка "назад" — на ВСЕХ инлайн-кнопках "Назад" (экраны уровня,
+# дерева, кормления и т.д. — используют общий text=t["back_button"]).
+BACK_BUTTON_EMOJI_ID = "6039539366177541657"  # ⬅️
+# Стрелка вверх — на кнопке "Повысить уровень" экрана "Уровень".
+LEVEL_UP_BUTTON_EMOJI_ID = "5449683594425410231"  # 🔼
+# Ёлка (тема "Дерева чудес") — на кнопке клика по дереву.
+TREE_CLICK_BUTTON_EMOJI_ID = "5235703350166563973"  # 🎄
+# Стрелка вверх и галочка — в тексте (не в кнопке) экрана "Уровень
+# панды": заголовок и строка текущего уровня.
+LEVEL_TITLE_EMOJI_ID = "5463122435425448565"  # ⬆️
+LEVEL_CURRENT_EMOJI_ID = "6035383199339648803"  # ✅
 # Замок на кнопке некупленного скина в реплай-меню "Облики"
 SKIN_LOCKED_EMOJI_ID = "5296369303661067030"
 # Мешок с монетами — теперь в строке баланса ("Баланс: ..."), НЕ в
@@ -506,6 +517,9 @@ SKIN_PRICE_EMOJI = f'<tg-emoji emoji-id="{SKIN_PRICE_EMOJI_ID}">💰</tg-emoji>'
 SKIN_DESC_EMOJI = f'<tg-emoji emoji-id="{SKIN_DESC_EMOJI_ID}">💬</tg-emoji>'
 CRYSTAL_EMOJI = f'<tg-emoji emoji-id="{CRYSTAL_EMOJI_ID}">🎁</tg-emoji>'
 SKIN_EQUIPPED_EMOJI = f'<tg-emoji emoji-id="{SKIN_EQUIPPED_EMOJI_ID}">✔️</tg-emoji>'
+LEVEL_TITLE_EMOJI = f'<tg-emoji emoji-id="{LEVEL_TITLE_EMOJI_ID}">⬆️</tg-emoji>'
+LEVEL_CURRENT_EMOJI = f'<tg-emoji emoji-id="{LEVEL_CURRENT_EMOJI_ID}">✅</tg-emoji>'
+TREE_TITLE_EMOJI = f'<tg-emoji emoji-id="{TREE_CLICK_BUTTON_EMOJI_ID}">🎄</tg-emoji>'
 
 
 
@@ -558,7 +572,7 @@ TEXTS = {
         "rename_cancelled": "<i>Переименование отменено.</i>",
         "feed_choice_title": "🧺 <b>Чем покормить панду?</b>\n<i>Выберите что-нибудь из корзины сада или витрины пекарни.</i>",
         "feed_item_button": "{emoji} {name} ×{count}",
-        "back_button": "◀️ Назад",
+        "back_button": "Назад",
         "fed_toast": "{emoji} {name} — голод +{restore}%! 🍖",
         "already_full_toast": "Панда пока сыта, рано кормить.",
         "empty_basket_toast": "🧺 Нет запасов на корм — соберите фрукты в саду или испеките что-нибудь в пекарне.",
@@ -596,8 +610,8 @@ TEXTS = {
             "Покормите её скорее, иначе штраф будет повторяться каждый час!</i>"
         ),
         "level_button": "🎋 Уровень",
-        "level_screen_title": "🎋 <b>Уровень панды</b>",
-        "level_current_line": "<b>Текущий уровень: {level}/25</b>",
+        "level_screen_title": f"{LEVEL_TITLE_EMOJI} <b>Уровень панды</b>",
+        "level_current_line": f"{LEVEL_CURRENT_EMOJI} <b>Текущий уровень: {{level}}/25</b>",
         "level_bonus_line": "<i>Бонус к длительности голода: +{bonus}%</i>",
         "level_next_line": "🎋 <b>До {level} уровня:</b>",
         "level_progress_line": "{have}/{need}",
@@ -607,21 +621,21 @@ TEXTS = {
         "res_name_wonder_bamboo": "Чудесный бамбук",
         "res_name_wonder_dew": "Роса",
         "res_name_magic_nut": "Волшебный орех",
-        "level_up_button": "🔼 Повысить уровень",
+        "level_up_button": "Повысить уровень",
         "level_insufficient_toast": "Недостаточно ресурсов — нужно ещё: {need}.",
         "level_up_toast": "🎉 Уровень повышен!",
         "level_up_message": (
             "🎉 <i>Панда достигла <b>{level}</b> уровня! Теперь голод длится "
             "дольше — она сможет обходиться без еды примерно на {bonus}% дольше, чем на 1 уровне.</i>"
         ),
-        "tree_button": "🌳 Дерево чудес",
-        "tree_screen_title": "🌳 <b>Дерево чудес</b>",
-        "tree_intro": "<i>Тряхните дерево — вдруг что-нибудь да упадёт!</i>",
+        "tree_button": "🎄 Дерево чудес",
+        "tree_screen_title": f"{TREE_TITLE_EMOJI} <b>Дерево чудес</b>",
+        "tree_intro": "<i>Прикоснитесь к дереву — вдруг оно поделится дарами!</i>",
         "tree_stock_bamboo": "🎋 Чудесный бамбук: <b>{count}</b>",
         "tree_stock_dew": "💧 Роса: <b>{count}</b>",
         "tree_stock_nut": "🌰 Волшебный орех: <b>{count}</b>",
         "tree_stock_karma": "✨ Карма: <b>{count}</b>",
-        "tree_click_button": "🌳 Тряхнуть дерево",
+        "tree_click_button": "Собрать дары",
         "tree_toast_bamboo": "🎋 С дерева упал чудесный бамбук!",
         "tree_toast_dew": "💧 С листьев скатилась капля росы!",
         "tree_toast_nut": "🌰 Среди веток нашёлся волшебный орех!",
@@ -659,7 +673,7 @@ TEXTS = {
         "rename_cancelled": "<i>Renaming cancelled.</i>",
         "feed_choice_title": "🧺 <b>What should the panda eat?</b>\n<i>Pick something from the garden basket or the bakery showcase.</i>",
         "feed_item_button": "{emoji} {name} ×{count}",
-        "back_button": "◀️ Back",
+        "back_button": "Back",
         "fed_toast": "{emoji} {name} — hunger +{restore}%! 🍖",
         "already_full_toast": "The panda is still full, too early to feed.",
         "empty_basket_toast": "🧺 Nothing to feed it with — pick some fruit in the garden or bake something first.",
@@ -697,8 +711,8 @@ TEXTS = {
             "Feed it soon, or the penalty will repeat every hour!</i>"
         ),
         "level_button": "🎋 Level",
-        "level_screen_title": "🎋 <b>Panda level</b>",
-        "level_current_line": "<b>Current level: {level}/25</b>",
+        "level_screen_title": f"{LEVEL_TITLE_EMOJI} <b>Panda level</b>",
+        "level_current_line": f"{LEVEL_CURRENT_EMOJI} <b>Current level: {{level}}/25</b>",
         "level_bonus_line": "<i>Hunger duration bonus: +{bonus}%</i>",
         "level_next_line": "🎋 <b>To level {level}:</b>",
         "level_progress_line": "{have}/{need}",
@@ -708,21 +722,21 @@ TEXTS = {
         "res_name_wonder_bamboo": "Wonder bamboo",
         "res_name_wonder_dew": "Dew",
         "res_name_magic_nut": "Magic nut",
-        "level_up_button": "🔼 Level up",
+        "level_up_button": "Level up",
         "level_insufficient_toast": "Not enough resources — need: {need}.",
         "level_up_toast": "🎉 Level up!",
         "level_up_message": (
             "🎉 <i>The panda reached level <b>{level}</b>! Hunger now lasts "
             "longer — it can go without food about {bonus}% longer than at level 1.</i>"
         ),
-        "tree_button": "🌳 Tree of Wonders",
-        "tree_screen_title": "🌳 <b>Tree of Wonders</b>",
-        "tree_intro": "<i>Shake the tree — maybe something will fall out!</i>",
+        "tree_button": "🎄 Tree of Wonders",
+        "tree_screen_title": f"{TREE_TITLE_EMOJI} <b>Tree of Wonders</b>",
+        "tree_intro": "<i>Touch the tree — maybe it'll share its gifts!</i>",
         "tree_stock_bamboo": "🎋 Wonder bamboo: <b>{count}</b>",
         "tree_stock_dew": "💧 Dew: <b>{count}</b>",
         "tree_stock_nut": "🌰 Magic nut: <b>{count}</b>",
         "tree_stock_karma": "✨ Karma: <b>{count}</b>",
-        "tree_click_button": "🌳 Shake the tree",
+        "tree_click_button": "Collect the gifts",
         "tree_toast_bamboo": "🎋 A wonder bamboo fell from the tree!",
         "tree_toast_dew": "💧 A drop of dew slid off the leaves!",
         "tree_toast_nut": "🌰 A magic nut turned up among the branches!",
@@ -1498,9 +1512,19 @@ def _build_level_view(lang: str, row: aiosqlite.Row) -> tuple[str, object]:
             ])
         if lines and lines[-1] == "":
             lines.pop()
-        builder.button(text=t["level_up_button"], callback_data="panda:level_up", style="primary")
+        builder.button(
+            text=t["level_up_button"],
+            callback_data="panda:level_up",
+            style="primary",
+            icon_custom_emoji_id=LEVEL_UP_BUTTON_EMOJI_ID,
+        )
 
-    builder.button(text=t["back_button"], callback_data="panda:level_back", style="primary")
+    builder.button(
+        text=t["back_button"],
+        callback_data="panda:level_back",
+        style="primary",
+        icon_custom_emoji_id=BACK_BUTTON_EMOJI_ID,
+    )
     builder.adjust(1)
 
     return "\n".join(lines), builder.as_markup()
@@ -1525,8 +1549,18 @@ def _build_tree_view(lang: str, row: aiosqlite.Row) -> tuple[str, object]:
     ]
 
     builder = InlineKeyboardBuilder()
-    builder.button(text=t["tree_click_button"], callback_data="panda:tree_click", style="primary")
-    builder.button(text=t["back_button"], callback_data="panda:tree_back", style="primary")
+    builder.button(
+        text=t["tree_click_button"],
+        callback_data="panda:tree_click",
+        style="primary",
+        icon_custom_emoji_id=TREE_CLICK_BUTTON_EMOJI_ID,
+    )
+    builder.button(
+        text=t["back_button"],
+        callback_data="panda:tree_back",
+        style="primary",
+        icon_custom_emoji_id=BACK_BUTTON_EMOJI_ID,
+    )
     builder.adjust(1)
 
     return "\n".join(lines), builder.as_markup()
@@ -1585,7 +1619,12 @@ def _build_feed_choice(
             callback_data=f"panda:feed_item:bakery:{rid}",
             style="primary",
         )
-    builder.button(text=t["back_button"], callback_data="panda:feed_back", style="primary")
+    builder.button(
+        text=t["back_button"],
+        callback_data="panda:feed_back",
+        style="primary",
+        icon_custom_emoji_id=BACK_BUTTON_EMOJI_ID,
+    )
     builder.adjust(1)
     return text, builder.as_markup()
 
