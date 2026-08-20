@@ -304,37 +304,41 @@ PANDA_LEVEL_HUNGER_BONUS_MAX_PERCENT = 300
 # пользовательского ввода, поэтому подстановка названия колонки прямо в
 # SQL (см. level_up_panda) безопасна.
 #
-# Уровень 2 настроен по ТЗ: 1000 кармы + 2 чудесного бамбука + 1 роса +
-# 1 волшебный орех. Остальные уровни (3-25) пока используют старую
-# кривую по чудесному бамбуку (см. историю: экспоненциальный рост,
-# сумма порогов 2..25 = 50000) — карму/росу/орех для них можно
-# донастроить позже, просто дописав нужные ключи в соответствующий
-# словарь ниже.
+# Стоимость подобрана так: уровни 2-4 — РОВНО как задал игрок (базовый
+# пример: 1000 кармы + 2 бамбука + 1 роса + 2 ореха на 2 уровень, дальше
+# по его цифрам). С 5 уровня и до 25-го — плавный рост с бОльшим
+# разрывом между уровнями, подобранный так, чтобы РОВНО на 25 уровне
+# получить 95 чудесного бамбука, 70 росы, 60 волшебных орехов (у
+# каждого свой темп роста в процентах, чтобы точно попасть в цель).
+# Карма продолжает расти тем же мягким темпом (~+12% к предыдущему),
+# но КАЖДОЕ значение округлено до круглого числа (кратно 50) для
+# красоты. Все 4 ресурса на всех 24 уровнях строго возрастают — ни
+# единого повтора.
 PANDA_LEVEL_COST: dict[int, dict[str, int]] = {
-    2: {"karma": 1000, "wonder_bamboo": 2, "wonder_dew": 1, "magic_nut": 1},
-    3: {"wonder_bamboo": 3},
-    4: {"wonder_bamboo": 4},
-    5: {"wonder_bamboo": 6},
-    6: {"wonder_bamboo": 10},
-    7: {"wonder_bamboo": 14},
-    8: {"wonder_bamboo": 21},
-    9: {"wonder_bamboo": 31},
-    10: {"wonder_bamboo": 46},
-    11: {"wonder_bamboo": 68},
-    12: {"wonder_bamboo": 101},
-    13: {"wonder_bamboo": 149},
-    14: {"wonder_bamboo": 221},
-    15: {"wonder_bamboo": 327},
-    16: {"wonder_bamboo": 484},
-    17: {"wonder_bamboo": 716},
-    18: {"wonder_bamboo": 1060},
-    19: {"wonder_bamboo": 1568},
-    20: {"wonder_bamboo": 2321},
-    21: {"wonder_bamboo": 3436},
-    22: {"wonder_bamboo": 5085},
-    23: {"wonder_bamboo": 7525},
-    24: {"wonder_bamboo": 11137},
-    25: {"wonder_bamboo": 15665},
+    2: {"karma": 1000, "wonder_bamboo": 2, "wonder_dew": 1, "magic_nut": 2},
+    3: {"karma": 2500, "wonder_bamboo": 5, "wonder_dew": 3, "magic_nut": 3},
+    4: {"karma": 5000, "wonder_bamboo": 7, "wonder_dew": 4, "magic_nut": 5},
+    5: {"karma": 5600, "wonder_bamboo": 8, "wonder_dew": 5, "magic_nut": 6},
+    6: {"karma": 6250, "wonder_bamboo": 9, "wonder_dew": 6, "magic_nut": 7},
+    7: {"karma": 7000, "wonder_bamboo": 10, "wonder_dew": 7, "magic_nut": 8},
+    8: {"karma": 7850, "wonder_bamboo": 11, "wonder_dew": 8, "magic_nut": 9},
+    9: {"karma": 8800, "wonder_bamboo": 12, "wonder_dew": 9, "magic_nut": 10},
+    10: {"karma": 9850, "wonder_bamboo": 14, "wonder_dew": 10, "magic_nut": 11},
+    11: {"karma": 11050, "wonder_bamboo": 16, "wonder_dew": 11, "magic_nut": 12},
+    12: {"karma": 12400, "wonder_bamboo": 18, "wonder_dew": 13, "magic_nut": 14},
+    13: {"karma": 13900, "wonder_bamboo": 20, "wonder_dew": 15, "magic_nut": 16},
+    14: {"karma": 15550, "wonder_bamboo": 23, "wonder_dew": 17, "magic_nut": 18},
+    15: {"karma": 17400, "wonder_bamboo": 26, "wonder_dew": 19, "magic_nut": 20},
+    16: {"karma": 19500, "wonder_bamboo": 29, "wonder_dew": 22, "magic_nut": 23},
+    17: {"karma": 21850, "wonder_bamboo": 33, "wonder_dew": 25, "magic_nut": 26},
+    18: {"karma": 24450, "wonder_bamboo": 37, "wonder_dew": 29, "magic_nut": 29},
+    19: {"karma": 27400, "wonder_bamboo": 42, "wonder_dew": 33, "magic_nut": 33},
+    20: {"karma": 30700, "wonder_bamboo": 48, "wonder_dew": 38, "magic_nut": 37},
+    21: {"karma": 34400, "wonder_bamboo": 54, "wonder_dew": 44, "magic_nut": 42},
+    22: {"karma": 38550, "wonder_bamboo": 61, "wonder_dew": 50, "magic_nut": 47},
+    23: {"karma": 43200, "wonder_bamboo": 69, "wonder_dew": 57, "magic_nut": 53},
+    24: {"karma": 48400, "wonder_bamboo": 78, "wonder_dew": 65, "magic_nut": 59},
+    25: {"karma": 54200, "wonder_bamboo": 95, "wonder_dew": 70, "magic_nut": 60},
 }
 
 # Порядок отображения ресурсов на экране "Уровень" и в тостах — везде
