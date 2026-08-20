@@ -478,7 +478,7 @@ TREE_CLICK_BUTTON_EMOJI_ID = "5235703350166563973"  # 🎄
 # Стрелка вверх и галочка — в тексте (не в кнопке) экрана "Уровень
 # панды": заголовок и строка текущего уровня.
 LEVEL_TITLE_EMOJI_ID = "5463122435425448565"  # ⬆️
-LEVEL_CURRENT_EMOJI_ID = "6035383199339648803"  # ✅
+BAMBOO_EMOJI_ID = "6035383199339648803"  # ✅ — для чудесного бамбука
 # Замок на кнопке некупленного скина в реплай-меню "Облики"
 SKIN_LOCKED_EMOJI_ID = "5296369303661067030"
 # Мешок с монетами — теперь в строке баланса ("Баланс: ..."), НЕ в
@@ -518,8 +518,18 @@ SKIN_DESC_EMOJI = f'<tg-emoji emoji-id="{SKIN_DESC_EMOJI_ID}">💬</tg-emoji>'
 CRYSTAL_EMOJI = f'<tg-emoji emoji-id="{CRYSTAL_EMOJI_ID}">🎁</tg-emoji>'
 SKIN_EQUIPPED_EMOJI = f'<tg-emoji emoji-id="{SKIN_EQUIPPED_EMOJI_ID}">✔️</tg-emoji>'
 LEVEL_TITLE_EMOJI = f'<tg-emoji emoji-id="{LEVEL_TITLE_EMOJI_ID}">⬆️</tg-emoji>'
-LEVEL_CURRENT_EMOJI = f'<tg-emoji emoji-id="{LEVEL_CURRENT_EMOJI_ID}">✅</tg-emoji>'
+BAMBOO_EMOJI = f'<tg-emoji emoji-id="{BAMBOO_EMOJI_ID}">✅</tg-emoji>'
 TREE_TITLE_EMOJI = f'<tg-emoji emoji-id="{TREE_CLICK_BUTTON_EMOJI_ID}">🎄</tg-emoji>'
+
+# RESOURCE_EMOJI (см. выше) объявлен раньше кастомных эмодзи-констант.
+# ВАЖНО: RESOURCE_EMOJI используется и в тостах (callback.answer,
+# show_alert=True) — а тосты НЕ поддерживают HTML/кастомные эмодзи,
+# только обычный юникод-текст. Поэтому RESOURCE_EMOJI НЕ трогаем
+# (бамбук там остаётся обычным 🎋), а для отображения В ТЕКСТЕ
+# СООБЩЕНИЯ (экран "Уровень", поддерживает HTML) заводим отдельную
+# копию с кастомным ✅ для бамбука — см. RESOURCE_EMOJI_RICH.
+RESOURCE_EMOJI_RICH = dict(RESOURCE_EMOJI)
+RESOURCE_EMOJI_RICH["wonder_bamboo"] = BAMBOO_EMOJI
 
 
 
@@ -609,14 +619,14 @@ TEXTS = {
             "💸 <i>Штраф за голодающую панду: −{amount} {currency}. "
             "Покормите её скорее, иначе штраф будет повторяться каждый час!</i>"
         ),
-        "level_button": "🎋 Уровень",
+        "level_button": "Уровень",
         "level_screen_title": f"{LEVEL_TITLE_EMOJI} <b>Уровень панды</b>",
-        "level_current_line": f"{LEVEL_CURRENT_EMOJI} <b>Текущий уровень: {{level}}/25</b>",
+        "level_current_line": "<b>Текущий уровень: {level}/25</b>",
         "level_bonus_line": "<i>Бонус к длительности голода: +{bonus}%</i>",
         "level_next_line": "🎋 <b>До {level} уровня:</b>",
         "level_progress_line": "{have}/{need}",
         "level_max_line": "🏆 <b>Достигнут максимальный уровень!</b>",
-        "level_have_line": "В инвентаре: {have} 🎋",
+        "level_have_line": f"В инвентаре: {{have}} {BAMBOO_EMOJI}",
         "res_name_karma": "Карма",
         "res_name_wonder_bamboo": "Чудесный бамбук",
         "res_name_wonder_dew": "Роса",
@@ -628,10 +638,10 @@ TEXTS = {
             "🎉 <i>Панда достигла <b>{level}</b> уровня! Теперь голод длится "
             "дольше — она сможет обходиться без еды примерно на {bonus}% дольше, чем на 1 уровне.</i>"
         ),
-        "tree_button": "🎄 Дерево чудес",
+        "tree_button": "Дерево чудес",
         "tree_screen_title": f"{TREE_TITLE_EMOJI} <b>Дерево чудес</b>",
         "tree_intro": "<i>Прикоснитесь к дереву — вдруг оно поделится дарами!</i>",
-        "tree_stock_bamboo": "🎋 Чудесный бамбук: <b>{count}</b>",
+        "tree_stock_bamboo": f"{BAMBOO_EMOJI} Чудесный бамбук: <b>{{count}}</b>",
         "tree_stock_dew": "💧 Роса: <b>{count}</b>",
         "tree_stock_nut": "🌰 Волшебный орех: <b>{count}</b>",
         "tree_stock_karma": "✨ Карма: <b>{count}</b>",
@@ -710,14 +720,14 @@ TEXTS = {
             "💸 <i>Penalty for a starving panda: −{amount} {currency}. "
             "Feed it soon, or the penalty will repeat every hour!</i>"
         ),
-        "level_button": "🎋 Level",
+        "level_button": "Level",
         "level_screen_title": f"{LEVEL_TITLE_EMOJI} <b>Panda level</b>",
-        "level_current_line": f"{LEVEL_CURRENT_EMOJI} <b>Current level: {{level}}/25</b>",
+        "level_current_line": "<b>Current level: {level}/25</b>",
         "level_bonus_line": "<i>Hunger duration bonus: +{bonus}%</i>",
         "level_next_line": "🎋 <b>To level {level}:</b>",
         "level_progress_line": "{have}/{need}",
         "level_max_line": "🏆 <b>Maximum level reached!</b>",
-        "level_have_line": "In inventory: {have} 🎋",
+        "level_have_line": f"In inventory: {{have}} {BAMBOO_EMOJI}",
         "res_name_karma": "Karma",
         "res_name_wonder_bamboo": "Wonder bamboo",
         "res_name_wonder_dew": "Dew",
@@ -729,10 +739,10 @@ TEXTS = {
             "🎉 <i>The panda reached level <b>{level}</b>! Hunger now lasts "
             "longer — it can go without food about {bonus}% longer than at level 1.</i>"
         ),
-        "tree_button": "🎄 Tree of Wonders",
+        "tree_button": "Tree of Wonders",
         "tree_screen_title": f"{TREE_TITLE_EMOJI} <b>Tree of Wonders</b>",
         "tree_intro": "<i>Touch the tree — maybe it'll share its gifts!</i>",
-        "tree_stock_bamboo": "🎋 Wonder bamboo: <b>{count}</b>",
+        "tree_stock_bamboo": f"{BAMBOO_EMOJI} Wonder bamboo: <b>{{count}}</b>",
         "tree_stock_dew": "💧 Dew: <b>{count}</b>",
         "tree_stock_nut": "🌰 Magic nut: <b>{count}</b>",
         "tree_stock_karma": "✨ Karma: <b>{count}</b>",
@@ -1454,11 +1464,13 @@ def _build_panda_view(lang: str, row: aiosqlite.Row) -> tuple[str, object]:
         text=t["level_button"],
         callback_data="panda:level",
         style="primary",
+        icon_custom_emoji_id=LEVEL_TITLE_EMOJI_ID,
     )
     builder.button(
         text=t["tree_button"],
         callback_data="panda:tree",
         style="primary",
+        icon_custom_emoji_id=TREE_CLICK_BUTTON_EMOJI_ID,
     )
     builder.button(
         text=t["setname_button"] if not row["name"] else t["rename_button"],
@@ -1503,7 +1515,7 @@ def _build_level_view(lang: str, row: aiosqlite.Row) -> tuple[str, object]:
             have = row[res]
             have_capped = min(have, need)
             percent = have_capped / need * 100 if need else 100
-            emoji = RESOURCE_EMOJI[res]
+            emoji = RESOURCE_EMOJI_RICH[res]
             lines.extend([
                 f"{emoji} {t[f'res_name_{res}']}",
                 f"<b>{_render_bar(percent)}</b>",
