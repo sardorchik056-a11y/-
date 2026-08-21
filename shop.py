@@ -369,13 +369,15 @@ TEXTS = {
             "{emoji} <b>{name}</b>\n"
             "<i>Введите количество штук (от 1 до {available}):</i>"
         ),
-        "quantity_invalid": "<i>Введите целое число от 1 до {available}.</i>",
+        "quantity_invalid": "<i>Неверное количество — ожидалось целое число от 1 до {available}. Ввод отменён, попробуйте снова.</i>",
+        "input_cancel_button": "❌ Отмена",
+        "input_cancelled_toast": "Ввод отменён.",
         "ask_price": (
             "{emoji} <b>{name}</b> ×{count}\n"
             f"<i>Назначьте цену за 1 штуку в {CURRENCY} — для этого фрукта "
             f"допустимо от {{min_price}} до {{max_price}} {CURRENCY}:</i>"
         ),
-        "price_invalid": f"<i>Введите целое число от {{min_price}} до {{max_price}} {CURRENCY}.</i>",
+        "price_invalid": f"<i>Неверная цена — ожидалось целое число от {{min_price}} до {{max_price}} {CURRENCY}. Ввод отменён, попробуйте снова.</i>",
         "listed_success": (
             f"{CE_CHECK} <b>Лот выставлен на рынок!</b>\n"
             f"<i>{{emoji}} {{name}} ×{{count}} по <b>{{price}} {CURRENCY}</b>/шт "
@@ -479,13 +481,15 @@ TEXTS = {
             "{emoji} <b>{name}</b>\n"
             "<i>Enter the quantity (1 to {available}):</i>"
         ),
-        "quantity_invalid": "<i>Enter a whole number from 1 to {available}.</i>",
+        "quantity_invalid": "<i>Invalid quantity — expected a whole number from 1 to {available}. Input cancelled, please try again.</i>",
+        "input_cancel_button": "❌ Cancel",
+        "input_cancelled_toast": "Input cancelled.",
         "ask_price": (
             "{emoji} <b>{name}</b> ×{count}\n"
             f"<i>Set the price for 1 unit in {CURRENCY} — this fruit "
             f"allows {{min_price}} to {{max_price}} {CURRENCY}:</i>"
         ),
-        "price_invalid": f"<i>Enter a whole number from {{min_price}} to {{max_price}} {CURRENCY}.</i>",
+        "price_invalid": f"<i>Invalid price — expected a whole number from {{min_price}} to {{max_price}} {CURRENCY}. Input cancelled, please try again.</i>",
         "listed_success": (
             f"{CE_CHECK} <b>Listed on the market!</b>\n"
             f"<i>{{emoji}} {{name}} ×{{count}} at <b>{{price}} {CURRENCY}</b>/ea "
@@ -1022,6 +1026,19 @@ def _quantity_options(available: int) -> list[int]:
 async def _get_lang(state: FSMContext) -> str:
     data = await state.get_data()
     return data.get("lang", "ru")
+
+
+def _build_cancel_keyboard(lang: str) -> object:
+    """Клавиатура с одной кнопкой "Отмена" — прикрепляется к сообщениям,
+    которые ждут текстовый ввод от игрока (цена/количество своими
+    руками, см. ShopStates.waiting_price/waiting_quantity). Даёт выход
+    из ожидания без необходимости прислать хоть что-то текстом — см.
+    on_cancel_input."""
+    t = TEXTS[lang]
+    builder = InlineKeyboardBuilder()
+    builder.button(text=t["input_cancel_button"], callback_data="shop:cancel_input", style="primary")
+    builder.adjust(1)
+    return builder.as_markup()
 
 
 # ==========================
@@ -1744,7 +1761,8 @@ async def on_sell_qty_chosen(callback: CallbackQuery, state: FSMContext) -> None
     lo, hi = _price_range(item_type, item_id)
     await callback.answer()
     await callback.message.answer(
-        t["ask_price"].format(emoji=item["emoji"], name=item["name"][lang], count=qty, min_price=lo, max_price=hi)
+        t["ask_price"].format(emoji=item["emoji"], name=item["name"][lang], count=qty, min_price=lo, max_price=hi),
+        reply_markup=_build_cancel_keyboard(lang),
     )
 
 
@@ -1765,7 +1783,15 @@ async def on_price_received(message: Message, state: FSMContext) -> None:
     lo, hi = _price_range(item_type, item_id)
     raw = (message.text or "").strip()
     if not raw.isdigit() or not (lo <= int(raw) <= hi):
+        # Ждём ввод только 1 раз — если игрок прислал не то (или вообще
+        # что угодно, не число в допустимом диапазоне), НЕ продолжаем
+        # бесконечно ждать следующую попытку: сбрасываем состояние и
+        # предлагаем начать заново с экрана рынка.
+        await state.set_state(None)
         await message.answer(t["price_invalid"].format(min_price=lo, max_price=hi))
+        balance = await get_balance(message.from_user.id)
+        text, markup = await _build_market_main(lang, message.from_user.id, balance)
+        await message.answer(text, reply_markup=markup)
         return
 
     price = int(raw)
@@ -1812,6 +1838,26 @@ async def on_price_received(message: Message, state: FSMContext) -> None:
             await message.answer(achives.format_unlock_text(lang, achv_result))
 
 
+# --- отмена ввода (общая для цены и количества) ---
+
+@router.callback_query(F.data == "shop:cancel_input")
+async def on_cancel_input(callback: CallbackQuery, state: FSMContext) -> None:
+    """Кнопка "Отмена" на сообщениях, ждущих текстовый ввод (своя цена/
+    своё количество, см. ShopStates.waiting_price/waiting_quantity).
+    Сбрасывает состояние без необходимости присылать что-либо текстом —
+    раньше единственным выходом было прислать корректное число, а любой
+    неверный ввод заставлял бота ждать снова и снова, без конца."""
+    lang = await _get_lang(state)
+    t = TEXTS[lang]
+
+    await state.set_state(None)
+    await callback.answer(t["input_cancelled_toast"])
+
+    balance = await get_balance(callback.from_user.id)
+    text, markup = await _build_market_main(lang, callback.from_user.id, balance)
+    await callback.message.edit_text(text, reply_markup=markup)
+
+
 # --- своё количество (общее для продажи и мгновенного выкупа) ---
 
 @router.callback_query(F.data.startswith("shop:customqty:"))
@@ -1840,7 +1886,8 @@ async def on_custom_qty_request(callback: CallbackQuery, state: FSMContext) -> N
 
     await callback.answer()
     await callback.message.answer(
-        t["ask_quantity"].format(emoji=item["emoji"], name=item["name"][lang], available=available)
+        t["ask_quantity"].format(emoji=item["emoji"], name=item["name"][lang], available=available),
+        reply_markup=_build_cancel_keyboard(lang),
     )
 
 
@@ -1865,7 +1912,14 @@ async def on_quantity_received(message: Message, state: FSMContext) -> None:
 
     raw = (message.text or "").strip()
     if not raw.isdigit() or not (1 <= int(raw) <= available):
+        # Как и с ценой — ждём ввод только 1 раз, без бесконечного цикла
+        # повторных попыток: сбрасываем состояние и отправляем обратно
+        # на экран рынка.
+        await state.set_state(None)
         await message.answer(t["quantity_invalid"].format(available=available))
+        balance = await get_balance(message.from_user.id)
+        text, markup = await _build_market_main(lang, message.from_user.id, balance)
+        await message.answer(text, reply_markup=markup)
         return
 
     qty = int(raw)
@@ -1877,7 +1931,8 @@ async def on_quantity_received(message: Message, state: FSMContext) -> None:
         await state.set_state(ShopStates.waiting_price)
         lo, hi = _price_range(item_type, item_id)
         await message.answer(
-            t["ask_price"].format(emoji=item["emoji"], name=item["name"][lang], count=qty, min_price=lo, max_price=hi)
+            t["ask_price"].format(emoji=item["emoji"], name=item["name"][lang], count=qty, min_price=lo, max_price=hi),
+            reply_markup=_build_cancel_keyboard(lang),
         )
         return
 
