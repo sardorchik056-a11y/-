@@ -387,6 +387,15 @@ TREE_NUT_CHANCE = 0.05
 TREE_KARMA_MIN = 10
 TREE_KARMA_MAX = 50
 
+# Минимальный интервал между засчитанными кликами по дереву (антиспам —
+# см. on_tree_click). Telegram ограничивает частоту редактирования ОДНОГО
+# и того же сообщения примерно 1 разом в секунду — если жать по кнопке
+# быстрее, editMessageText начинает падать с "Too Many Requests". Клики
+# чаще этого интервала просто игнорируются (см. _tree_click_last_ts) —
+# ни БД, ни сообщение не трогаем, только короткий тост без анимации,
+# чтобы это не выглядело как зависание кнопки.
+TREE_CLICK_COOLDOWN_SECONDS = 0.4
+
 # --- настроение и дружба (падают, пока голод < HUNGER_LOW_THRESHOLD) ---
 # Тик — раз в 10-15 реальных минут. Поскольку эффект должен считаться
 # "лениво" по одним лишь таймстампам (без фоновых задач), берём
@@ -650,6 +659,7 @@ TEXTS = {
         "tree_toast_dew": "💧 С листьев скатилась капля росы!",
         "tree_toast_nut": "🌰 Среди веток нашёлся волшебный орех!",
         "tree_toast_karma": "✨ +{amount} кармы",
+        "tree_click_too_fast": "🌿 Не так быстро!",
     },
     "en": {
         "default_title": f"{NAME_EMOJI} <b>My panda</b>",
@@ -751,6 +761,7 @@ TEXTS = {
         "tree_toast_dew": "💧 A drop of dew slid off the leaves!",
         "tree_toast_nut": "🌰 A magic nut turned up among the branches!",
         "tree_toast_karma": "✨ +{amount} karma",
+        "tree_click_too_fast": "🌿 Not so fast!",
     },
 }
 
@@ -1055,6 +1066,13 @@ async def add_wonder_bamboo(user_id: int, amount: int) -> aiosqlite.Row:
         await database.commit()
         return await _fetch_row(db, user_id)
 
+
+# Время (time.time()) последнего ЗАСЧИТАННОГО клика по дереву на
+# игрока — см. TREE_CLICK_COOLDOWN_SECONDS / on_tree_click. Обычный dict
+# в памяти процесса (не БД): это чисто антиспам-троттлинг Telegram-
+# запросов, а не игровое состояние — переживать рестарт бота ему не
+# нужно, и незачем платить лишними обращениями к БД на каждый клик.
+_tree_click_last_ts: dict[int, float] = {}
 
 # Исход клика по дереву -> (колонка в таблице panda, шанс). Порядок
 # важен: шансы проверяются по очереди, как отрезки на числовой прямой
@@ -2568,11 +2586,22 @@ async def on_open_tree(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data == "panda:tree_click")
 async def on_tree_click(callback: CallbackQuery, state: FSMContext) -> None:
-    """Один клик по дереву — кликер без кулдауна и лимита нажатий: жми
-    сколько угодно раз подряд (см. click_wonder_tree про сами шансы)."""
+    """Один клик по дереву — кликер без лимита нажатий, но с коротким
+    антиспам-кулдауном между ЗАСЧИТАННЫМИ кликами (см.
+    TREE_CLICK_COOLDOWN_SECONDS): Telegram не даёт редактировать одно и
+    то же сообщение чаще примерно раза в секунду, а тут это происходит
+    на каждый клик. Клик быстрее кулдауна просто игнорируется — ни БД,
+    ни сообщение не трогаем, только лёгкий тост-подсказка."""
     lang = await _get_lang(state, callback.from_user.id)
     t = TEXTS[lang]
     user_id = callback.from_user.id
+
+    now = time.time()
+    last = _tree_click_last_ts.get(user_id, 0.0)
+    if now - last < TREE_CLICK_COOLDOWN_SECONDS:
+        await callback.answer(t["tree_click_too_fast"])
+        return
+    _tree_click_last_ts[user_id] = now
 
     row, result, amount = await click_wonder_tree(user_id)
 
