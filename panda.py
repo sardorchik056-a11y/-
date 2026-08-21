@@ -1342,7 +1342,17 @@ async def grant_skin_free(user_id: int, skin_id: str) -> bool:
     сроку самой привилегии — истечёт привилегия или нет, скин
     остаётся у игрока навсегда. Идемпотентна: если скин уже есть,
     просто ничего не делает. Возвращает True, если скин выдан именно
-    этим вызовом, False — если он уже был у игрока раньше."""
+    этим вызовом, False — если он уже был у игрока раньше.
+
+    ВАЖНО: как и buy_skin(), выдача скина засчитывается для ачивок
+    "Модник" (panda_skin, за факт обладания любым скином) и порогов
+    panda_skins_3/5/all (за количество). Раньше это не учитывалось —
+    игрок, чей первый (а иногда и единственный) скин пришёл именно
+    отсюда, а не из магазина, ачивки не получал вообще, пока не
+    совершал обычную покупку. Здесь награда выдаётся "тихо" (без
+    Message/lang — их у этой функции нет), возвращаемый список
+    achv_ids вызывающий код (donate.py) может использовать, чтобы
+    показать уведомления так же, как panda._unlock_all()."""
     async with database.user_lock(user_id):
         db = await database.get_db()
         async with db.execute(
@@ -1358,7 +1368,14 @@ async def grant_skin_free(user_id: int, skin_id: str) -> bool:
             (user_id, skin_id, time.time()),
         )
         await database.flush()
-        return True
+
+    # Вне database.user_lock — как и в on_buy_skin, achives.unlock сам
+    # по себе идемпотентен и не требует захваченного лока игрока.
+    await achives.unlock(user_id, "panda_skin")
+    owned_skins = await get_owned_skins(user_id)
+    for achv_id in _skin_count_achievements(len(owned_skins)):
+        await achives.unlock(user_id, achv_id)
+    return True
 
 
 async def equip_skin(user_id: int, skin_id: str | None) -> bool:
