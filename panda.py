@@ -1119,7 +1119,13 @@ async def level_up_panda(user_id: int) -> tuple[aiosqlite.Row, bool]:
     уровень уже максимальный — row не меняется, False."""
     async with database.user_lock(user_id):
         db = await database.get_db()
-        row = await _fetch_row(db, user_id)
+        # _settle_locked (не голый _fetch_row!) — гарантирует, что строка
+        # панды существует (создаст при первом обращении, как и в
+        # feed_panda/click_wonder_tree/add_wonder_bamboo), и заодно
+        # применяет накопившийся распад настроения/дружбы, если игрок
+        # почему-то попал сюда мимо экрана "Уровень" (там это уже делает
+        # on_open_level через _settle).
+        row = await _settle_locked(user_id)
 
         cost = next_level_cost(row["level"])
         if cost is None or any(row[res] < amount for res, amount in cost.items()):
