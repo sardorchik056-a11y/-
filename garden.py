@@ -823,9 +823,18 @@ async def _auto_collect_ready(user_id: int) -> list[dict]:
     ачивки, реально выданные в рамках ЭТОГО вызова — по одному сбору
     (см. _collect_plot_if_matches), плюс "Тройной урожай"
     (garden_all_plots_ripe), если в этот заход собраны сразу все
-    GARDEN_PLOT_COUNT грядок — именно поэтому эта ачивка засчитывается
-    только тут (открытие сада/просмотр грядки), а не в фоновой задаче,
-    которая всегда собирает грядки по одной."""
+    GARDEN_BASE_PLOT_COUNT (базовые, бесплатные) грядок — именно
+    поэтому эта ачивка засчитывается только тут (открытие сада/
+    просмотр грядки), а не в фоновой задаче, которая всегда собирает
+    грядки по одной. Порог — GARDEN_BASE_PLOT_COUNT (3), а не
+    GARDEN_PLOT_COUNT (6, с учётом платных): описание ачивки прямо
+    говорит "все 3 грядки", и она задумывалась достижимой без покупки
+    платных слотов — та же логика, что и у garden_all_plots_full (см.
+    комментарий у GARDEN_BASE_PLOT_COUNT выше). Раньше тут ошибочно
+    стоял GARDEN_PLOT_COUNT — из-за этого ачивка была практически
+    недостижима: требовала владеть всеми платными грядками сразу и
+    умудриться, чтобы все 6 созрели к одному заходу, хотя "Тройной
+    урожай" про 3."""
     db = await database.get_db()
     now = time.time()
     async with db.execute(
@@ -852,7 +861,7 @@ async def _auto_collect_ready(user_id: int) -> list[dict]:
                 collected_count += 1
                 achv_results.extend(results)
 
-    if collected_count >= GARDEN_PLOT_COUNT:
+    if collected_count >= GARDEN_BASE_PLOT_COUNT:
         import achives
 
         result = await achives.unlock(user_id, "garden_all_plots_ripe")
