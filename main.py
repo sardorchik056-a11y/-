@@ -126,18 +126,21 @@ class OwnerGuardMiddleware:
 #   ЗАЩИТА РЕПЛАЙ-МЕНЮ ОТ ВЫЗОВА В ГРУППАХ
 # ==========================
 # Блокируем именно САМУ реплай-клавиатуру (персистентное меню внизу
-# экрана) в группах — не разделы бота как таковые. Разделы по-прежнему
-# доступны в группе через явные команды (/сад, /б, /панда и т.п.) —
-# они открывают обычный инлайн-экран раздела, а не персистентную
-# клавиатуру, и завязаны только на (chat, user_id) вызвавшего, так что
-# ничего чужого не показывают.
+# экрана) в группах — и только её. Все текстовые команды/алиасы разделов
+# (/сад, сад, б, я, проф и т.п. — хоть со слэшем, хоть без) в группе
+# работают как обычно и этой мидлварью не трогаются: короткие алиасы —
+# это по сути команды, не "нажатие кнопки", даже если по написанию
+# совпадают с какой-то из подписей кнопок после lower() (например "я" и
+# "сад" — короткие алиасы раздела "Профиль"/"Сад", а вовсе не сама
+# кнопка).
 #
-# Блокируется два сценария:
-#   1) Голый текст без слэша, совпадающий с подписью кнопки меню/коротким
-#      алиасом раздела (GROUP_MENU_TRIGGER_WORDS) — это ровно то, что
-#      отправляется при нажатии физической кнопки реплай-клавиатуры
-#      (Telegram шлёт её текст как обычное сообщение). Команда с тем же
-#      словом, но со слэшем (например "/сад"), под это НЕ попадает.
+# Блокируется только два сценария, где реально показывается/открывается
+# именно ФИЗИЧЕСКАЯ персистентная клавиатура:
+#   1) Точное нажатие кнопки реплай-меню — Telegram при нажатии шлёт
+#      ЕЁ ТЕКСТ КАК ЕСТЬ, с тем же регистром/эмодзи, что и на кнопке
+#      (см. main_menu_keyboard). Сравниваем без lower() и без обрезки
+#      слэша — именно поэтому вручную набранный "сад"/"я" под это не
+#      попадает, а вот нажатая кнопка "Сад" — попадает.
 #   2) Команда /start — она сама явно прикрепляет main_menu_keyboard
 #      (см. cmd_start / setup_routers ниже), то есть напрямую открывает
 #      персистентное меню, а не просто раздел.
@@ -146,48 +149,37 @@ class OwnerGuardMiddleware:
 # мидлварь на dp.message, подключается ко ВСЕМ роутерам разом (см.
 # setup_routers) и отсекает такие сообщения ДО того, как они вообще
 # попадут в какой-либо хендлер — не важно, в main.py он лежит или в
-# admin.py/panda.py/garden.py/... Набор "триггерных" текстов собирается
-# ниже, после того как определены сами наборы триггеров разделов
-# (GROUP_MENU_TRIGGER_WORDS), поэтому смотреть его нужно там — а не
-# здесь, где он просто используется по имени (Python резолвит глобальные
-# имена в момент вызова, а не в момент объявления класса, так что
-# порядок объявления значения не имеет).
+# admin.py/panda.py/garden.py/... Набор подписей кнопок
+# (MENU_BUTTON_CAPTIONS) собирается ниже, сразу после TEXTS, но
+# используется здесь по имени — Python резолвит глобальные имена в
+# момент вызова, а не в момент объявления класса, так что порядок
+# объявления значения не имеет.
 
 GROUP_CHAT_TYPES = {ChatType.GROUP, ChatType.SUPERGROUP}
 
 
-def _normalize_group_guard_text(raw: str) -> tuple[bool, str, str]:
-    """Возвращает (это_команда_со_слэшем, нормализованный_текст_без_слэша,
-    слово_команды) — без "@ИмяБота", в нижнем регистре. Нужно, чтобы
-    отличать "сад" (нажатие кнопки реплай-меню) от "/сад" (команда,
-    которую по просьбе не блокируем)."""
-    text = (raw or "").strip()
-    is_command = text.startswith("/")
-    if is_command:
-        text = text[1:].split("@", 1)[0]
-    text = text.strip().lower()
-    command_word = text.split(" ", 1)[0] if text else ""
-    return is_command, text, command_word
-
-
 class GroupMenuGuardMiddleware:
     """Внешняя мидлварь на dp.message: не даёт открыть саму персистентную
-    реплай-клавиатуру внутри группового чата — ни "нажатием" кнопки
-    (текст без слэша), ни командой /start. Команды разделов (/сад, /б
-    и т.п.) и другие групповые сценарии (например, /передать) эта
-    мидлварь не трогает — они по-прежнему работают в группе."""
+    реплай-клавиатуру внутри группового чата — ни точным нажатием кнопки
+    меню, ни командой /start. Все текстовые команды и алиасы разделов
+    (/сад, сад, б, я и т.п.) и другие групповые сценарии (например,
+    /передать) эта мидлварь не трогает — они по-прежнему работают в
+    группе."""
 
     async def __call__(self, handler, event: Message, data: dict):
         if event.chat.type in GROUP_CHAT_TYPES:
-            raw_text = event.text or event.caption or ""
-            is_command, normalized, command_word = _normalize_group_guard_text(raw_text)
-            is_start_command = is_command and command_word == "start"
-            is_reply_button_press = (not is_command) and normalized in GROUP_MENU_TRIGGER_WORDS
+            raw_text = (event.text or event.caption or "").strip()
+            stripped_command = raw_text[1:].split("@", 1)[0].strip().lower() if raw_text.startswith("/") else None
+            is_start_command = stripped_command is not None and stripped_command.split(" ", 1)[0] == "start"
+            # Сравнение с подписями кнопок — БЕЗ lower(), это точное
+            # нажатие физической кнопки реплай-клавиатуры, а не команда.
+            is_reply_button_press = raw_text in MENU_BUTTON_CAPTIONS
             if is_start_command or is_reply_button_press:
                 await event.reply(
                     "🙈 Меню (кнопки внизу экрана) открывается только в "
                     "личных сообщениях — напишите мне в ЛС. Команды разделов "
-                    "(например /сад) по-прежнему работают и в группе.\n"
+                    "(например /сад или просто \"сад\"/\"я\") по-прежнему "
+                    "работают и в группе.\n"
                     "🙈 The menu (bottom keyboard) only opens in a private "
                     "chat — please message me directly. Section commands "
                     "(e.g. /garden) still work here."
@@ -365,6 +357,19 @@ TEXTS = {
         "menu_opened": f"{MENU_OPENED_EMOJI} <i><b>Alright, let's begin! Good luck!</b></i>",
         "balance_command_line": f"{shop.CE_BALANCE} <b>{{coins}}</b> | {prof.CE_CRYSTAL} <b>{{crystals}}</b>",
     },
+}
+
+
+# Точные подписи кнопок реплай-меню (main_menu_keyboard), для обоих языков,
+# БЕЗ lower() и БЕЗ обрезки — используется в GroupMenuGuardMiddleware выше,
+# чтобы отличить настоящее нажатие физической кнопки (Telegram шлёт именно
+# такой текст как есть) от вручную набранного короткого алиаса раздела
+# ("сад", "я" и т.п.), который в группах блокировать не нужно.
+MENU_BUTTON_CAPTIONS = {
+    value
+    for lang_texts in TEXTS.values()
+    for key, value in lang_texts.items()
+    if key.startswith("menu_") and key != "menu_opened"
 }
 
 
@@ -698,27 +703,9 @@ ACHIEVEMENTS_TRIGGERS = {"ач", "достижение", "ачивки", "дос
 
 
 # Полный набор "триггерных" текстов реплай-меню для GroupMenuGuardMiddleware
-# выше: и короткие текстовые ярлыки разделов (сад/б/панда/...), и сами
-# подписи кнопок главного меню на обоих языках (t["menu_*"] из TEXTS) — на
-# случай, если подпись кнопки не входит буквально ни в один из наборов
-# ниже (например, "🥐 Пекарня"/"Облики" с эмодзи или без короткого алиаса).
-GROUP_MENU_TRIGGER_WORDS = (
-    set(BALANCE_TRIGGERS)
-    | GARDEN_TRIGGERS
-    | PROFILE_TRIGGERS
-    | BAKERY_TRIGGERS
-    | MARKET_TRIGGERS
-    | PANDA_TRIGGERS
-    | LEADERS_TRIGGERS
-    | DONATE_TRIGGERS
-    | ACHIEVEMENTS_TRIGGERS
-    | {
-        value.strip().lower()
-        for lang_texts in TEXTS.values()
-        for key, value in lang_texts.items()
-        if key.startswith("menu_") and key != "menu_opened"
-    }
-)
+# выше был здесь раньше — убран: короткие алиасы (сад/б/я/панда/...) не
+# блокируем в группах, это по факту команды. Сама точная подпись кнопки
+# для сравнения (MENU_BUTTON_CAPTIONS) определена сразу после TEXTS.
 
 
 @router.message(_text_trigger_filter(GARDEN_TRIGGERS))
