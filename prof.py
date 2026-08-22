@@ -607,12 +607,14 @@ async def _build_friends_text(lang: str, user_id: int, bot) -> str:
     return "\n".join(lines)
 
 
-def _friends_keyboard(lang: str) -> InlineKeyboardBuilder:
+def _friends_keyboard(lang: str, owner_id: int) -> InlineKeyboardBuilder:
+    import main
+
     t = FRIENDS_TEXTS[lang]
     builder = InlineKeyboardBuilder()
     builder.button(
         text=t["back_button"],
-        callback_data="friends:back",
+        callback_data=main.owner_cb(owner_id, "friends:back"),
         style="primary",
         icon_custom_emoji_id=EMOJI_BACK_ID,
     )
@@ -671,7 +673,7 @@ async def open_friends(callback: CallbackQuery, state: FSMContext) -> None:
 
     import admin
 
-    await admin.smart_edit(callback.message, text, reply_markup=_friends_keyboard(lang))
+    await admin.smart_edit(callback.message, text, reply_markup=_friends_keyboard(lang, callback.from_user.id))
     await callback.answer()
 
 
@@ -682,7 +684,7 @@ async def close_friends(callback: CallbackQuery, state: FSMContext) -> None:
 
     import admin
 
-    await admin.smart_edit(callback.message, text, reply_markup=_profile_keyboard(lang))
+    await admin.smart_edit(callback.message, text, reply_markup=_profile_keyboard(lang, callback.from_user.id))
     await callback.answer()
 
 
@@ -1758,24 +1760,26 @@ async def _build_profile_text(lang: str, user) -> str:
 #   КЛАВИАТУРЫ
 # ==========================
 
-def _profile_keyboard(lang: str) -> InlineKeyboardBuilder:
+def _profile_keyboard(lang: str, owner_id: int) -> InlineKeyboardBuilder:
+    import main
+
     t = TEXTS[lang]
     builder = InlineKeyboardBuilder()
     builder.button(
         text=t["friends_button"],
-        callback_data="friends:open",
+        callback_data=main.owner_cb(owner_id, "friends:open"),
         style="primary",
         icon_custom_emoji_id=EMOJI_FRIENDS_ID,
     )
     builder.button(
         text=t["gifts_button"],
-        callback_data="gifts:open",
+        callback_data=main.owner_cb(owner_id, "gifts:open"),
         style="primary",
         icon_custom_emoji_id=EMOJI_GIFT_ID,
     )
     builder.button(
         text=t["settings_button"],
-        callback_data="settings:open",
+        callback_data=main.owner_cb(owner_id, "settings:open"),
         style="primary",
         icon_custom_emoji_id=EMOJI_SETTINGS_ID,
     )
@@ -1783,7 +1787,9 @@ def _profile_keyboard(lang: str) -> InlineKeyboardBuilder:
     return builder.as_markup()
 
 
-async def _settings_keyboard(lang: str) -> InlineKeyboardBuilder:
+async def _settings_keyboard(lang: str, owner_id: int) -> InlineKeyboardBuilder:
+    import main
+
     """Язык — в один ряд (как на онбординге в main.py: language_keyboard).
     Текущий язык выделяется цветом кнопки (style="success" — зелёная),
     а не галочкой/текстом, второй язык — обычный вид ("primary").
@@ -1796,7 +1802,7 @@ async def _settings_keyboard(lang: str) -> InlineKeyboardBuilder:
     for code, title in SETTINGS_LANGUAGES.items():
         builder.button(
             text=title,
-            callback_data=f"settings:lang:{code}",
+            callback_data=main.owner_cb(owner_id, f"settings:lang:{code}"),
             style="success" if code == lang else "primary",
         )
 
@@ -1828,13 +1834,13 @@ async def _settings_keyboard(lang: str) -> InlineKeyboardBuilder:
 
     builder.button(
         text=t["name_button"],
-        callback_data="settings:name",
+        callback_data=main.owner_cb(owner_id, "settings:name"),
         style="primary",
         icon_custom_emoji_id=EMOJI_EDIT_NAME_ID,
     )
     builder.button(
         text=t["back_button"],
-        callback_data="settings:back",
+        callback_data=main.owner_cb(owner_id, "settings:back"),
         icon_custom_emoji_id=EMOJI_BACK_ID,
     )
 
@@ -1846,15 +1852,19 @@ async def _settings_keyboard(lang: str) -> InlineKeyboardBuilder:
     return builder.as_markup()
 
 
-def _name_cancel_keyboard(lang: str) -> InlineKeyboardBuilder:
+def _name_cancel_keyboard(lang: str, owner_id: int) -> InlineKeyboardBuilder:
+    import main
+
     t = SETTINGS_TEXTS[lang]
     builder = InlineKeyboardBuilder()
-    builder.button(text=t["cancel_button"], callback_data="settings:name_cancel")
+    builder.button(text=t["cancel_button"], callback_data=main.owner_cb(owner_id, "settings:name_cancel"))
     builder.adjust(1)
     return builder.as_markup()
 
 
-def _gifts_list_keyboard(lang: str, page: int) -> InlineKeyboardBuilder:
+def _gifts_list_keyboard(lang: str, page: int, owner_id: int) -> InlineKeyboardBuilder:
+    import main
+
     """Список подарков постранично — по 5 штук, в кнопке только
     название (плюс огонёк нужного цвета, чтобы сразу было видно тип
     награды)."""
@@ -1867,7 +1877,7 @@ def _gifts_list_keyboard(lang: str, page: int) -> InlineKeyboardBuilder:
     for gift in GIFTS[start:start + PAGE_SIZE]:
         builder.button(
             text=gift["name"][lang],
-            callback_data=f"gift:info:{gift['id']}",
+            callback_data=main.owner_cb(owner_id, f"gift:info:{gift['id']}"),
             style="primary",
             icon_custom_emoji_id=GIFT_EMOJI.get(gift["id"], (EMOJI_GIFT_ID,))[0],
         )
@@ -1880,52 +1890,56 @@ def _gifts_list_keyboard(lang: str, page: int) -> InlineKeyboardBuilder:
     prev_cb = f"gifts:page:{page - 1}" if page > 0 else "noop"
     next_cb = f"gifts:page:{page + 1}" if page < total - 1 else "noop"
     if page > 0:
-        builder.button(text=" ", callback_data=prev_cb, icon_custom_emoji_id=EMOJI_PAGE_PREV_ID)
+        builder.button(text=" ", callback_data=main.owner_cb(owner_id, prev_cb), icon_custom_emoji_id=EMOJI_PAGE_PREV_ID)
     else:
-        builder.button(text="·", callback_data="noop")
+        builder.button(text="·", callback_data=main.owner_cb(owner_id, "noop"))
     builder.button(
         text=t["page_indicator"].format(page=page + 1, total=total),
-        callback_data="noop",
+        callback_data=main.owner_cb(owner_id, "noop"),
     )
     if page < total - 1:
-        builder.button(text=" ", callback_data=next_cb, icon_custom_emoji_id=EMOJI_PAGE_NEXT_ID)
+        builder.button(text=" ", callback_data=main.owner_cb(owner_id, next_cb), icon_custom_emoji_id=EMOJI_PAGE_NEXT_ID)
     else:
-        builder.button(text="·", callback_data="noop")
+        builder.button(text="·", callback_data=main.owner_cb(owner_id, "noop"))
 
-    builder.button(text=t["back_button"], callback_data="gifts:back", icon_custom_emoji_id=EMOJI_BACK_ID)
+    builder.button(text=t["back_button"], callback_data=main.owner_cb(owner_id, "gifts:back"), icon_custom_emoji_id=EMOJI_BACK_ID)
 
     builder.adjust(*([1] * len(GIFTS[start:start + PAGE_SIZE])), 3, 1)
     return builder.as_markup()
 
 
-def _gift_info_keyboard(lang: str, gift_id: int, page: int) -> InlineKeyboardBuilder:
+def _gift_info_keyboard(lang: str, gift_id: int, page: int, owner_id: int) -> InlineKeyboardBuilder:
+    import main
+
     t = GIFTS_TEXTS[lang]
     builder = InlineKeyboardBuilder()
     builder.button(
         text=t["send_button"],
-        callback_data=f"gift:send:{gift_id}",
+        callback_data=main.owner_cb(owner_id, f"gift:send:{gift_id}"),
         style="primary",
         icon_custom_emoji_id=EMOJI_GIFT_ID,
     )
     builder.button(
         text=t["buy_button"],
-        callback_data=f"gift:buy:{gift_id}",
+        callback_data=main.owner_cb(owner_id, f"gift:buy:{gift_id}"),
         style="primary",
         icon_custom_emoji_id=EMOJI_GIFT_BUY_ID,
     )
     builder.button(
         text=t["back_button"],
-        callback_data=f"gifts:page:{page}",
+        callback_data=main.owner_cb(owner_id, f"gifts:page:{page}"),
         icon_custom_emoji_id=EMOJI_BACK_ID,
     )
     builder.adjust(1, 1, 1)
     return builder.as_markup()
 
 
-def _send_cancel_keyboard(lang: str) -> InlineKeyboardBuilder:
+def _send_cancel_keyboard(lang: str, owner_id: int) -> InlineKeyboardBuilder:
+    import main
+
     t = GIFTS_TEXTS[lang]
     builder = InlineKeyboardBuilder()
-    builder.button(text=t["cancel_button"], callback_data="gift:send_cancel")
+    builder.button(text=t["cancel_button"], callback_data=main.owner_cb(owner_id, "gift:send_cancel"))
     builder.adjust(1)
     return builder.as_markup()
 
@@ -2087,7 +2101,7 @@ async def open_profile(message: Message, state: FSMContext) -> None:
     # сам импортирует prof.py на верхнем уровне (цикл).
     import admin
 
-    await admin.send_with_section_image(message, "profile", text, reply_markup=_profile_keyboard(lang))
+    await admin.send_with_section_image(message, "profile", text, reply_markup=_profile_keyboard(lang, message.from_user.id))
 
     # Общая ачивка "С днём рождения аккаунта!" — проверяется тут же, при
     # открытии профиля (первый и самый очевидный момент, где first_seen
@@ -2131,7 +2145,7 @@ async def open_gifts(callback: CallbackQuery, state: FSMContext) -> None:
 
     import admin
 
-    await admin.smart_edit(callback.message, text, reply_markup=_gifts_list_keyboard(lang, 0))
+    await admin.smart_edit(callback.message, text, reply_markup=_gifts_list_keyboard(lang, 0, callback.from_user.id))
     await callback.answer()
 
 
@@ -2142,7 +2156,7 @@ async def back_to_profile(callback: CallbackQuery, state: FSMContext) -> None:
 
     import admin
 
-    await admin.smart_edit(callback.message, text, reply_markup=_profile_keyboard(lang))
+    await admin.smart_edit(callback.message, text, reply_markup=_profile_keyboard(lang, callback.from_user.id))
     await callback.answer()
 
 
@@ -2159,7 +2173,7 @@ async def open_settings(callback: CallbackQuery, state: FSMContext) -> None:
 
     import admin
 
-    await admin.smart_edit(callback.message, text, reply_markup=await _settings_keyboard(lang))
+    await admin.smart_edit(callback.message, text, reply_markup=await _settings_keyboard(lang, callback.from_user.id))
     await callback.answer()
 
 
@@ -2170,7 +2184,7 @@ async def close_settings(callback: CallbackQuery, state: FSMContext) -> None:
 
     import admin
 
-    await admin.smart_edit(callback.message, text, reply_markup=_profile_keyboard(lang))
+    await admin.smart_edit(callback.message, text, reply_markup=_profile_keyboard(lang, callback.from_user.id))
     await callback.answer()
 
 
@@ -2207,7 +2221,7 @@ async def change_language(callback: CallbackQuery, state: FSMContext) -> None:
 
     import admin
 
-    await admin.smart_edit(callback.message, text, reply_markup=await _settings_keyboard(new_lang))
+    await admin.smart_edit(callback.message, text, reply_markup=await _settings_keyboard(new_lang, callback.from_user.id))
 
     # Реплай-клавиатура главного меню (main.py: main_menu_keyboard) тоже
     # локализована и сама по себе не обновляется — без явной пересылки
@@ -2238,7 +2252,7 @@ async def open_name_change(callback: CallbackQuery, state: FSMContext) -> None:
     await admin.smart_edit(
         callback.message,
         t["name_prompt"].format(limit=NAME_MAX_LENGTH),
-        reply_markup=_name_cancel_keyboard(lang),
+        reply_markup=_name_cancel_keyboard(lang, callback.from_user.id),
     )
     await callback.answer()
 
@@ -2251,7 +2265,7 @@ async def cancel_name_change(callback: CallbackQuery, state: FSMContext) -> None
 
     import admin
 
-    await admin.smart_edit(callback.message, text, reply_markup=await _settings_keyboard(lang))
+    await admin.smart_edit(callback.message, text, reply_markup=await _settings_keyboard(lang, callback.from_user.id))
     await callback.answer()
 
 
@@ -2266,7 +2280,7 @@ async def process_name_change(message: Message, state: FSMContext) -> None:
     # БД: многострочное "имя" сломало бы вёрстку карточки профиля (там
     # оно всегда одна строка рядом с CE_NAME).
     if not raw_text.strip() or "\n" in raw_text:
-        await message.answer(t["name_invalid"], reply_markup=_name_cancel_keyboard(lang))
+        await message.answer(t["name_invalid"], reply_markup=_name_cancel_keyboard(lang, message.from_user.id))
         return
 
     # Лимит — по видимым символам (message.text): кастомный эмодзи там
@@ -2275,7 +2289,7 @@ async def process_name_change(message: Message, state: FSMContext) -> None:
     if len(raw_text) > NAME_MAX_LENGTH:
         await message.answer(
             t["name_too_long"].format(limit=NAME_MAX_LENGTH),
-            reply_markup=_name_cancel_keyboard(lang),
+            reply_markup=_name_cancel_keyboard(lang, message.from_user.id),
         )
         return
 
@@ -2300,7 +2314,7 @@ async def process_name_change(message: Message, state: FSMContext) -> None:
 
     import admin
 
-    await admin.send_with_section_image(message, "profile", text, reply_markup=_profile_keyboard(lang))
+    await admin.send_with_section_image(message, "profile", text, reply_markup=_profile_keyboard(lang, message.from_user.id))
 
 
 @router.callback_query(F.data.startswith("gifts:page:"))
@@ -2314,7 +2328,7 @@ async def show_gifts_page(callback: CallbackQuery, state: FSMContext) -> None:
 
     import admin
 
-    await admin.smart_edit(callback.message, text, reply_markup=_gifts_list_keyboard(lang, page))
+    await admin.smart_edit(callback.message, text, reply_markup=_gifts_list_keyboard(lang, page, callback.from_user.id))
     await callback.answer()
 
 
@@ -2334,7 +2348,7 @@ async def show_gift_info(callback: CallbackQuery, state: FSMContext) -> None:
 
     import admin
 
-    await admin.smart_edit(callback.message, text, reply_markup=_gift_info_keyboard(lang, gift_id, page))
+    await admin.smart_edit(callback.message, text, reply_markup=_gift_info_keyboard(lang, gift_id, page, callback.from_user.id))
     await callback.answer()
 
 
@@ -2382,7 +2396,7 @@ async def process_gift_buy(callback: CallbackQuery, state: FSMContext) -> None:
 
     import admin
 
-    await admin.smart_edit(callback.message, text, reply_markup=_gift_info_keyboard(lang, gift_id, page))
+    await admin.smart_edit(callback.message, text, reply_markup=_gift_info_keyboard(lang, gift_id, page, callback.from_user.id))
 
     # Ачивка "Щедрость" — за подарок себе тоже засчитывается, наравне с
     # отправкой другому (см. process_gift_target). Локальный импорт —
@@ -2433,7 +2447,7 @@ async def gift_send_prompt(callback: CallbackQuery, state: FSMContext) -> None:
 
     import admin
 
-    await admin.smart_edit(callback.message, text, reply_markup=_send_cancel_keyboard(lang))
+    await admin.smart_edit(callback.message, text, reply_markup=_send_cancel_keyboard(lang, callback.from_user.id))
     await callback.answer()
 
 
@@ -2451,10 +2465,10 @@ async def gift_send_cancel(callback: CallbackQuery, state: FSMContext) -> None:
     if gift is not None:
         page = _gift_page(gift_id)
         text = await _build_gift_info_text(lang, gift, callback.from_user.id)
-        await admin.smart_edit(callback.message, text, reply_markup=_gift_info_keyboard(lang, gift_id, page))
+        await admin.smart_edit(callback.message, text, reply_markup=_gift_info_keyboard(lang, gift_id, page, callback.from_user.id))
     else:
         text = await _build_gifts_list_text(lang, callback.from_user.id)
-        await admin.smart_edit(callback.message, text, reply_markup=_gifts_list_keyboard(lang, 0))
+        await admin.smart_edit(callback.message, text, reply_markup=_gifts_list_keyboard(lang, 0, callback.from_user.id))
     await callback.answer()
 
 
@@ -2481,11 +2495,11 @@ async def process_gift_target(message: Message, state: FSMContext) -> None:
 
     target_id = await _resolve_target(raw)
     if target_id is None:
-        await message.answer(t["target_not_found"], reply_markup=_send_cancel_keyboard(lang))
+        await message.answer(t["target_not_found"], reply_markup=_send_cancel_keyboard(lang, message.from_user.id))
         return
 
     if target_id == message.from_user.id:
-        await message.answer(t["cant_send_self"], reply_markup=_send_cancel_keyboard(lang))
+        await message.answer(t["cant_send_self"], reply_markup=_send_cancel_keyboard(lang, message.from_user.id))
         return
 
     reserve_result = await _reserve_daily_send(message.from_user.id, gift["amount"])
