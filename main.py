@@ -125,14 +125,22 @@ class OwnerGuardMiddleware:
 # ==========================
 #   ЗАЩИТА РЕПЛАЙ-МЕНЮ ОТ ВЫЗОВА В ГРУППАХ
 # ==========================
-# Реплай-меню (главное меню и все его разделы — сад/рынок/панда/пекарня/
-# профиль/донаты/ачивки/лидеры), а также команда /start, рассчитаны на
-# личку с ботом: там же держится FSM-состояние конкретного игрока
-# (по (chat, user_id)) и вся его игровая сессия. Если бот состоит в
-# группе (нужно это, например, для /передать — см. блок ниже), то без
-# этой защиты любой участник группы мог бы, написав "сад"/"б"/нажав
-# текст кнопки меню и т.п., открыть в группе чужой (или "ничей" в
-# контексте группового чата) экран раздела — и это было бы видно всем.
+# Блокируем именно САМУ реплай-клавиатуру (персистентное меню внизу
+# экрана) в группах — не разделы бота как таковые. Разделы по-прежнему
+# доступны в группе через явные команды (/сад, /б, /панда и т.п.) —
+# они открывают обычный инлайн-экран раздела, а не персистентную
+# клавиатуру, и завязаны только на (chat, user_id) вызвавшего, так что
+# ничего чужого не показывают.
+#
+# Блокируется два сценария:
+#   1) Голый текст без слэша, совпадающий с подписью кнопки меню/коротким
+#      алиасом раздела (GROUP_MENU_TRIGGER_WORDS) — это ровно то, что
+#      отправляется при нажатии физической кнопки реплай-клавиатуры
+#      (Telegram шлёт её текст как обычное сообщение). Команда с тем же
+#      словом, но со слэшем (например "/сад"), под это НЕ попадает.
+#   2) Команда /start — она сама явно прикрепляет main_menu_keyboard
+#      (см. cmd_start / setup_routers ниже), то есть напрямую открывает
+#      персистентное меню, а не просто раздел.
 #
 # Решение — по той же схеме, что и OwnerGuardMiddleware выше: внешняя
 # мидлварь на dp.message, подключается ко ВСЕМ роутерам разом (см.
@@ -148,37 +156,43 @@ class OwnerGuardMiddleware:
 GROUP_CHAT_TYPES = {ChatType.GROUP, ChatType.SUPERGROUP}
 
 
-def _normalize_group_guard_text(raw: str) -> tuple[str, str]:
-    """Возвращает (нормализованный_текст, слово_команды) для проверки
-    и на реплай-меню триггеры, и на команду /start — без слэша,
-    без "@ИмяБота", в нижнем регистре."""
+def _normalize_group_guard_text(raw: str) -> tuple[bool, str, str]:
+    """Возвращает (это_команда_со_слэшем, нормализованный_текст_без_слэша,
+    слово_команды) — без "@ИмяБота", в нижнем регистре. Нужно, чтобы
+    отличать "сад" (нажатие кнопки реплай-меню) от "/сад" (команда,
+    которую по просьбе не блокируем)."""
     text = (raw or "").strip()
-    if text.startswith("/"):
+    is_command = text.startswith("/")
+    if is_command:
         text = text[1:].split("@", 1)[0]
     text = text.strip().lower()
     command_word = text.split(" ", 1)[0] if text else ""
-    return text, command_word
+    return is_command, text, command_word
 
 
 class GroupMenuGuardMiddleware:
-    """Внешняя мидлварь на dp.message: не даёт открыть реплай-меню
-    (главное меню, ярлыки разделов, команду /б) и команду /start внутри
-    группового чата — эти сценарии рассчитаны на личку с ботом. Другие
-    групповые сценарии (например, /передать) эта мидлварь не трогает."""
+    """Внешняя мидлварь на dp.message: не даёт открыть саму персистентную
+    реплай-клавиатуру внутри группового чата — ни "нажатием" кнопки
+    (текст без слэша), ни командой /start. Команды разделов (/сад, /б
+    и т.п.) и другие групповые сценарии (например, /передать) эта
+    мидлварь не трогает — они по-прежнему работают в группе."""
 
     async def __call__(self, handler, event: Message, data: dict):
         if event.chat.type in GROUP_CHAT_TYPES:
             raw_text = event.text or event.caption or ""
-            normalized, command_word = _normalize_group_guard_text(raw_text)
-            is_start_command = raw_text.strip().startswith("/") and command_word == "start"
-            if is_start_command or normalized in GROUP_MENU_TRIGGER_WORDS:
+            is_command, normalized, command_word = _normalize_group_guard_text(raw_text)
+            is_start_command = is_command and command_word == "start"
+            is_reply_button_press = (not is_command) and normalized in GROUP_MENU_TRIGGER_WORDS
+            if is_start_command or is_reply_button_press:
                 await event.reply(
-                    "🙈 Меню и разделы бота открываются только в личных "
-                    "сообщениях — напишите мне в ЛС.\n"
-                    "🙈 The menu only works in a private chat with me — "
-                    "please message me directly."
+                    "🙈 Меню (кнопки внизу экрана) открывается только в "
+                    "личных сообщениях — напишите мне в ЛС. Команды разделов "
+                    "(например /сад) по-прежнему работают и в группе.\n"
+                    "🙈 The menu (bottom keyboard) only opens in a private "
+                    "chat — please message me directly. Section commands "
+                    "(e.g. /garden) still work here."
                 )
-                return  # хендлер не вызывается — реплай-меню в группе не открывается
+                return  # хендлер не вызывается — персистентное меню в группе не открывается
         return await handler(event, data)
 
 
