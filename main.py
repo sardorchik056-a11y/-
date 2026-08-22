@@ -5,7 +5,7 @@ import re
 
 from aiogram import Bot, Dispatcher, Router, F
 from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
+from aiogram.enums import ChatType, ParseMode
 from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.filters import CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
@@ -123,6 +123,66 @@ class OwnerGuardMiddleware:
 
 
 # ==========================
+#   ЗАЩИТА РЕПЛАЙ-МЕНЮ ОТ ВЫЗОВА В ГРУППАХ
+# ==========================
+# Реплай-меню (главное меню и все его разделы — сад/рынок/панда/пекарня/
+# профиль/донаты/ачивки/лидеры), а также команда /start, рассчитаны на
+# личку с ботом: там же держится FSM-состояние конкретного игрока
+# (по (chat, user_id)) и вся его игровая сессия. Если бот состоит в
+# группе (нужно это, например, для /передать — см. блок ниже), то без
+# этой защиты любой участник группы мог бы, написав "сад"/"б"/нажав
+# текст кнопки меню и т.п., открыть в группе чужой (или "ничей" в
+# контексте группового чата) экран раздела — и это было бы видно всем.
+#
+# Решение — по той же схеме, что и OwnerGuardMiddleware выше: внешняя
+# мидлварь на dp.message, подключается ко ВСЕМ роутерам разом (см.
+# setup_routers) и отсекает такие сообщения ДО того, как они вообще
+# попадут в какой-либо хендлер — не важно, в main.py он лежит или в
+# admin.py/panda.py/garden.py/... Набор "триггерных" текстов собирается
+# ниже, после того как определены сами наборы триггеров разделов
+# (GROUP_MENU_TRIGGER_WORDS), поэтому смотреть его нужно там — а не
+# здесь, где он просто используется по имени (Python резолвит глобальные
+# имена в момент вызова, а не в момент объявления класса, так что
+# порядок объявления значения не имеет).
+
+GROUP_CHAT_TYPES = {ChatType.GROUP, ChatType.SUPERGROUP}
+
+
+def _normalize_group_guard_text(raw: str) -> tuple[str, str]:
+    """Возвращает (нормализованный_текст, слово_команды) для проверки
+    и на реплай-меню триггеры, и на команду /start — без слэша,
+    без "@ИмяБота", в нижнем регистре."""
+    text = (raw or "").strip()
+    if text.startswith("/"):
+        text = text[1:].split("@", 1)[0]
+    text = text.strip().lower()
+    command_word = text.split(" ", 1)[0] if text else ""
+    return text, command_word
+
+
+class GroupMenuGuardMiddleware:
+    """Внешняя мидлварь на dp.message: не даёт открыть реплай-меню
+    (главное меню, ярлыки разделов, команду /б) и команду /start внутри
+    группового чата — эти сценарии рассчитаны на личку с ботом. Другие
+    групповые сценарии (например, /передать) эта мидлварь не трогает."""
+
+    async def __call__(self, handler, event: Message, data: dict):
+        if event.chat.type in GROUP_CHAT_TYPES:
+            raw_text = event.text or event.caption or ""
+            normalized, command_word = _normalize_group_guard_text(raw_text)
+            is_start_command = raw_text.strip().startswith("/") and command_word == "start"
+            if is_start_command or normalized in GROUP_MENU_TRIGGER_WORDS:
+                await event.reply(
+                    "🙈 Меню и разделы бота открываются только в личных "
+                    "сообщениях — напишите мне в ЛС.\n"
+                    "🙈 The menu only works in a private chat with me — "
+                    "please message me directly."
+                )
+                return  # хендлер не вызывается — реплай-меню в группе не открывается
+        return await handler(event, data)
+
+
+# ==========================
 #   ПОДКЛЮЧЕНИЕ РОУТЕРОВ
 # ==========================
 # Вынесено в отдельную функцию и вызывается только при запуске файла как
@@ -154,6 +214,10 @@ def setup_routers() -> None:
     # ОТ ЧУЖИХ НАЖАТИЙ" выше) — внешняя мидлварь именно на callback_query,
     # применяется ко ВСЕМ роутерам ниже, а не только к router/admin.router.
     dp.callback_query.outer_middleware(OwnerGuardMiddleware())
+    # Защита реплай-меню от вызова в группах (см. блок "ЗАЩИТА РЕПЛАЙ-МЕНЮ
+    # ОТ ВЫЗОВА В ГРУППАХ" выше) — внешняя мидлварь именно на message,
+    # применяется ко ВСЕМ роутерам ниже, а не только к router/admin.router.
+    dp.message.outer_middleware(GroupMenuGuardMiddleware())
     dp.include_router(router)
     dp.include_router(admin.router)
     dp.include_router(panda.router)
@@ -617,6 +681,30 @@ PANDA_TRIGGERS = {"панда", "п", "кормить", "panda", "feed"}
 LEADERS_TRIGGERS = {"лидеры", "лид", "топ", "leaders", "top"}
 DONATE_TRIGGERS = {"донат", "дон", "donate", "don"}
 ACHIEVEMENTS_TRIGGERS = {"ач", "достижение", "ачивки", "дос", "achievements", "ach"}
+
+
+# Полный набор "триггерных" текстов реплай-меню для GroupMenuGuardMiddleware
+# выше: и короткие текстовые ярлыки разделов (сад/б/панда/...), и сами
+# подписи кнопок главного меню на обоих языках (t["menu_*"] из TEXTS) — на
+# случай, если подпись кнопки не входит буквально ни в один из наборов
+# ниже (например, "🥐 Пекарня"/"Облики" с эмодзи или без короткого алиаса).
+GROUP_MENU_TRIGGER_WORDS = (
+    set(BALANCE_TRIGGERS)
+    | GARDEN_TRIGGERS
+    | PROFILE_TRIGGERS
+    | BAKERY_TRIGGERS
+    | MARKET_TRIGGERS
+    | PANDA_TRIGGERS
+    | LEADERS_TRIGGERS
+    | DONATE_TRIGGERS
+    | ACHIEVEMENTS_TRIGGERS
+    | {
+        value.strip().lower()
+        for lang_texts in TEXTS.values()
+        for key, value in lang_texts.items()
+        if key.startswith("menu_") and key != "menu_opened"
+    }
+)
 
 
 @router.message(_text_trigger_filter(GARDEN_TRIGGERS))
