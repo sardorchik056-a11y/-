@@ -426,7 +426,12 @@ DEFAULT_CATEGORY = "level"
 DEFAULT_PERIOD = "all"
 
 
-def _leaderboard_keyboard(lang: str, cat_id: str, period: str) -> InlineKeyboardMarkup:
+def _leaderboard_keyboard(lang: str, cat_id: str, period: str, owner_id: int) -> InlineKeyboardMarkup:
+    # Локальный импорт main — см. owner_cb/OwnerGuardMiddleware в main.py:
+    # main.py сам импортирует leaders.py, поэтому импорт на уровне модуля
+    # дал бы цикл (тот же приём, что и с `import admin` ниже).
+    import main
+
     kb = InlineKeyboardBuilder()
     for c_id in CATEGORY_ORDER:
         title = CATEGORIES[c_id][lang]
@@ -438,12 +443,15 @@ def _leaderboard_keyboard(lang: str, cat_id: str, period: str) -> InlineKeyboard
             # нюанс, что и в achives.py/main.py).
             kb.button(
                 text=text,
-                callback_data=f"lead:set:{c_id}:{period}",
+                callback_data=main.owner_cb(owner_id, f"lead:set:{c_id}:{period}"),
                 icon_custom_emoji_id=emoji_id,
             )
         else:
             glyph = CATEGORY_GLYPH[c_id]
-            kb.button(text=f"{glyph} {text}", callback_data=f"lead:set:{c_id}:{period}")
+            kb.button(
+                text=f"{glyph} {text}",
+                callback_data=main.owner_cb(owner_id, f"lead:set:{c_id}:{period}"),
+            )
     # Периоды — двумя рядами: "Сегодня/Вчера/Неделя" сверху,
     # "Месяц/Всё время" снизу.
     for p_id in PERIOD_ORDER:
@@ -451,7 +459,7 @@ def _leaderboard_keyboard(lang: str, cat_id: str, period: str) -> InlineKeyboard
         text = f"• {title} •" if p_id == period else title
         kb.button(
             text=text,
-            callback_data=f"lead:set:{cat_id}:{p_id}",
+            callback_data=main.owner_cb(owner_id, f"lead:set:{cat_id}:{p_id}"),
             icon_custom_emoji_id=PERIOD_EMOJI_ID,
         )
     kb.adjust(3, 3, 2)
@@ -491,7 +499,7 @@ async def _get_lang(state: FSMContext, user_id: int) -> str:
 async def open_leaders(message: Message, state: FSMContext) -> None:
     lang = await _get_lang(state, message.from_user.id)
     text = await _render_leaderboard(lang, DEFAULT_CATEGORY, DEFAULT_PERIOD)
-    keyboard = _leaderboard_keyboard(lang, DEFAULT_CATEGORY, DEFAULT_PERIOD)
+    keyboard = _leaderboard_keyboard(lang, DEFAULT_CATEGORY, DEFAULT_PERIOD, message.from_user.id)
 
     # Картинка раздела (админ-панель, admin:sections, ключ "leaders") —
     # тот же приём, что и у "Достижения" в achives.py. Локальный
@@ -508,7 +516,7 @@ async def switch_leaderboard(callback: CallbackQuery, state: FSMContext) -> None
     lang = await _get_lang(state, callback.from_user.id)
 
     text = await _render_leaderboard(lang, cat_id, period)
-    keyboard = _leaderboard_keyboard(lang, cat_id, period)
+    keyboard = _leaderboard_keyboard(lang, cat_id, period, callback.from_user.id)
 
     import admin
 
