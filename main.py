@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import random
 import re
 
 from aiogram import Bot, Dispatcher, Router, F
@@ -44,6 +45,81 @@ router = Router()
 
 
 # ==========================
+#   ЗАЩИТА ИНЛАЙН-КНОПОК ОТ ЧУЖИХ НАЖАТИЙ
+# ==========================
+# Раньше callback_data кнопок (lang:ru, gender:male, transfer:source:coins
+# и т.д.) никак не привязывал кнопку к тому, КОМУ она адресована — в
+# группе (или если сообщение вообще кто-то видит кроме автора) нажать
+# такую кнопку мог кто угодно, и это отрабатывало как будто нажал сам
+# адресат. Плюс FSM-состояние в aiogram хранится по (chat, user_id), так
+# что "чужое" нажатие ещё и путало данные в состоянии нажавшего.
+#
+# Решение — минимально инвазивное: владелец кнопки дописывается в САМ
+# конец callback_data через разделитель "~" (нигде в существующих
+# callback_data он не встречается — там используется ":") функцией
+# owner_cb() ниже. Мидлварь OwnerGuardMiddleware подключена как ВНЕШНЯЯ
+# (outer) на dp.callback_query — то есть отрабатывает вообще для ЛЮБОЙ
+# инлайн-кнопки бота, из какого бы роутера (panda.py/garden.py/shop.py/
+# bakery.py/prof.py/donate.py/achives.py/leaders.py/admin.py) она ни
+# была, а не только для кнопок, объявленных в main.py.
+#
+# Если нажавший — владелец, мидлварь тихо "срезает" метку владельца с
+# конца callback_data и пропускает нажатие дальше — все существующие
+# хендлеры (F.data == ..., F.data.startswith(...), .split(":")) видят
+# ровно тот же callback_data, что и раньше, без единой правки в них.
+#
+# Если нажал кто-то другой — хендлер вообще не вызывается, а нажавшему
+# показывается прикольный алерт (см. INTRUDER_ALERTS). Кнопки, ещё не
+# размеченные через owner_cb() (в panda.py/garden.py и т.п. — они не
+# были переданы, поэтому не тронуты), просто не содержат метки владельца
+# и продолжают работать как раньше — подключение мидлвари ничего не
+# ломает "по умолчанию", защита появляется только там, где кнопка явно
+# создана через owner_cb().
+#
+# Как разметить кнопку владельцем в ДРУГИХ модулях (когда дойдут руки):
+#   from main import owner_cb
+#   builder.button(text=..., callback_data=owner_cb(user_id, "panda:feed"))
+# где user_id — это id того, кому адресовано сообщение с кнопкой (обычно
+# message.from_user.id / callback.from_user.id в момент отправки).
+
+OWNER_SEP = "~"
+
+
+def owner_cb(owner_id: int, data: str) -> str:
+    """Добавляет метку владельца к callback_data кнопки. Использовать
+    вместо голого callback_data=... везде, где кнопка должна быть
+    доступна только тому, кому адресовано сообщение с ней."""
+    return f"{data}{OWNER_SEP}{owner_id}"
+
+
+INTRUDER_ALERTS = [
+    "🐾 Брысь! Это не твоя кнопка.",
+    "🐼 Ты не хозяин этому меню — брысь!",
+    "🖐 Руки прочь от чужой кнопки!",
+    "😤 Ты кто такой? Давай, до свидания — жми /start.",
+]
+
+
+class OwnerGuardMiddleware:
+    """Внешняя мидлварь на dp.callback_query: проверяет метку владельца
+    (см. owner_cb выше) у ЛЮБОЙ инлайн-кнопки бота, из какого бы роутера
+    она ни была. См. подробный комментарий к блоку выше."""
+
+    async def __call__(self, handler, event: CallbackQuery, data: dict):
+        raw = event.data or ""
+        if OWNER_SEP in raw:
+            payload, _, owner_part = raw.rpartition(OWNER_SEP)
+            if owner_part.isdigit():
+                owner_id = int(owner_part)
+                if event.from_user.id != owner_id:
+                    await event.answer(random.choice(INTRUDER_ALERTS), show_alert=True)
+                    return  # хендлер не вызывается вообще — чужое нажатие проигнорировано
+                # Свой — срезаем метку, дальше всё как раньше.
+                event.data = payload
+        return await handler(event, data)
+
+
+# ==========================
 #   ПОДКЛЮЧЕНИЕ РОУТЕРОВ
 # ==========================
 # Вынесено в отдельную функцию и вызывается только при запуске файла как
@@ -71,6 +147,10 @@ def setup_routers() -> None:
     # LoginStreakMiddleware), а не конкретного роутера — иначе стрик считался
     # бы только для действий в разделе "Профиль".
     dp.update.outer_middleware(prof.LoginStreakMiddleware())
+    # Защита инлайн-кнопок от чужих нажатий (см. блок "ЗАЩИТА ИНЛАЙН-КНОПОК
+    # ОТ ЧУЖИХ НАЖАТИЙ" выше) — внешняя мидлварь именно на callback_query,
+    # применяется ко ВСЕМ роутерам ниже, а не только к router/admin.router.
+    dp.callback_query.outer_middleware(OwnerGuardMiddleware())
     dp.include_router(router)
     dp.include_router(admin.router)
     dp.include_router(panda.router)
@@ -275,26 +355,26 @@ TRANSFER_TEXTS = {
 #   КЛАВИАТУРЫ
 # ==========================
 
-def language_keyboard() -> InlineKeyboardBuilder:
+def language_keyboard(owner_id: int) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
     for code, title in LANGUAGES.items():
-        builder.button(text=title, callback_data=f"lang:{code}", style="primary")
+        builder.button(text=title, callback_data=owner_cb(owner_id, f"lang:{code}"), style="primary")
     builder.adjust(2)
     return builder.as_markup()
 
 
-def gender_keyboard(lang: str) -> InlineKeyboardBuilder:
+def gender_keyboard(lang: str, owner_id: int) -> InlineKeyboardBuilder:
     t = TEXTS[lang]
     builder = InlineKeyboardBuilder()
     builder.button(
         text=t["male"],
-        callback_data="gender:male",
+        callback_data=owner_cb(owner_id, "gender:male"),
         style="primary",
         icon_custom_emoji_id=MALE_EMOJI_ID,
     )
     builder.button(
         text=t["female"],
-        callback_data="gender:female",
+        callback_data=owner_cb(owner_id, "gender:female"),
         style="primary",
         icon_custom_emoji_id=FEMALE_EMOJI_ID,
     )
@@ -302,7 +382,7 @@ def gender_keyboard(lang: str) -> InlineKeyboardBuilder:
     return builder.as_markup()
 
 
-def guide_keyboard(lang: str) -> InlineKeyboardBuilder:
+def guide_keyboard(lang: str, owner_id: int) -> InlineKeyboardBuilder:
     t = TEXTS[lang]
     builder = InlineKeyboardBuilder()
     builder.button(
@@ -312,7 +392,7 @@ def guide_keyboard(lang: str) -> InlineKeyboardBuilder:
     )
     builder.button(
         text=t["start_button"],
-        callback_data="start_now",
+        callback_data=owner_cb(owner_id, "start_now"),
         style="primary",
         icon_custom_emoji_id=START_BUTTON_EMOJI_ID,
     )
@@ -320,7 +400,7 @@ def guide_keyboard(lang: str) -> InlineKeyboardBuilder:
     return builder.as_markup()
 
 
-def guide_keyboard_started(lang: str) -> InlineKeyboardBuilder:
+def guide_keyboard_started(lang: str, owner_id: int) -> InlineKeyboardBuilder:
     """Та же клавиатура, но кнопка 'Начинаем!' уже нажата и больше не работает."""
     t = TEXTS[lang]
     builder = InlineKeyboardBuilder()
@@ -331,7 +411,7 @@ def guide_keyboard_started(lang: str) -> InlineKeyboardBuilder:
     )
     builder.button(
         text=t["start_button"],
-        callback_data="start_now_dead",
+        callback_data=owner_cb(owner_id, "start_now_dead"),
         style="primary",
         icon_custom_emoji_id=START_BUTTON_EMOJI_ID,
     )
@@ -466,12 +546,12 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
         await message.answer_photo(
             photo=start_image,
             caption=CHOOSE_LANGUAGE_TEXT,
-            reply_markup=language_keyboard(),
+            reply_markup=language_keyboard(message.from_user.id),
         )
     else:
         await message.answer(
             CHOOSE_LANGUAGE_TEXT,
-            reply_markup=language_keyboard(),
+            reply_markup=language_keyboard(message.from_user.id),
         )
 
 
@@ -645,18 +725,25 @@ def _fmt_transfer_target(user_id: int, username: str | None) -> str:
     return f"<code>{user_id}</code>"
 
 
-def _transfer_source_keyboard(lang: str) -> InlineKeyboardBuilder:
+def _transfer_source_keyboard(lang: str, owner_id: int) -> InlineKeyboardBuilder:
     t = TRANSFER_TEXTS[lang]
     builder = InlineKeyboardBuilder()
-    builder.button(text=t["btn_basket"], callback_data="transfer:source:garden", style="primary")
-    builder.button(text=t["btn_showcase"], callback_data="transfer:source:bakery", style="primary")
+    builder.button(
+        text=t["btn_basket"], callback_data=owner_cb(owner_id, "transfer:source:garden"), style="primary"
+    )
+    builder.button(
+        text=t["btn_showcase"], callback_data=owner_cb(owner_id, "transfer:source:bakery"), style="primary"
+    )
     coin_kwargs = {"icon_custom_emoji_id": _TRANSFER_COIN_ICON_ID} if _TRANSFER_COIN_ICON_ID else {}
     builder.button(
-        text=t["btn_coins"], callback_data="transfer:source:coins", style="primary", **coin_kwargs
+        text=t["btn_coins"],
+        callback_data=owner_cb(owner_id, "transfer:source:coins"),
+        style="primary",
+        **coin_kwargs,
     )
     builder.button(
         text=t["btn_crystals"],
-        callback_data="transfer:source:crystals",
+        callback_data=owner_cb(owner_id, "transfer:source:crystals"),
         style="primary",
         icon_custom_emoji_id=_TRANSFER_CRYSTAL_ICON_ID,
     )
@@ -704,7 +791,7 @@ async def _ask_transfer_source(message: Message, state: FSMContext, lang: str, u
     await state.set_state(None)
     await message.reply(
         TRANSFER_TEXTS[lang]["choose_source"],
-        reply_markup=_transfer_source_keyboard(lang),
+        reply_markup=_transfer_source_keyboard(lang, message.from_user.id),
     )
 
 
@@ -823,7 +910,7 @@ async def cb_transfer_source(callback: CallbackQuery, state: FSMContext) -> None
             text=t["item_button"].format(
                 emoji=item["emoji"], name=item["name"][lang], count=inventory[item_id]
             ),
-            callback_data=f"transfer:item:{source}:{item_id}",
+            callback_data=owner_cb(callback.from_user.id, f"transfer:item:{source}:{item_id}"),
             style="primary",
         )
     builder.adjust(1)
@@ -1030,7 +1117,7 @@ async def process_language(callback: CallbackQuery, state: FSMContext):
     await update_message(
         callback,
         t["choose_gender"],
-        reply_markup=gender_keyboard(lang),
+        reply_markup=gender_keyboard(lang, callback.from_user.id),
     )
 
 
@@ -1051,7 +1138,7 @@ async def process_gender(callback: CallbackQuery, state: FSMContext):
     await update_message(
         callback,
         t["final_message"],
-        reply_markup=guide_keyboard(lang),
+        reply_markup=guide_keyboard(lang, callback.from_user.id),
     )
 
     # Реферальная награда (prof.py, раздел "Друзья") — начисляется
@@ -1090,7 +1177,7 @@ async def process_start_now(callback: CallbackQuery, state: FSMContext):
     # Кнопка "Начинаем!" больше не должна работать после нажатия — заменяем
     # её callback_data на "мёртвый", кнопка остаётся видимой, но неактивной.
     await callback.message.edit_reply_markup(
-        reply_markup=guide_keyboard_started(lang)
+        reply_markup=guide_keyboard_started(lang, callback.from_user.id)
     )
 
 
