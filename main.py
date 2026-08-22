@@ -115,7 +115,10 @@ class OwnerGuardMiddleware:
                     await event.answer(random.choice(INTRUDER_ALERTS), show_alert=True)
                     return  # хендлер не вызывается вообще — чужое нажатие проигнорировано
                 # Свой — срезаем метку, дальше всё как раньше.
-                event.data = payload
+                # CallbackQuery — frozen pydantic-модель, поэтому напрямую
+                # присвоить event.data нельзя (ValidationError: frozen_instance).
+                # Делаем копию объекта с обновлённым полем и передаём её дальше.
+                event = event.model_copy(update={"data": payload})
         return await handler(event, data)
 
 
