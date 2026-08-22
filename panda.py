@@ -1452,7 +1452,9 @@ def _friend_tier(friendship: float) -> str:
     ])
 
 
-def _build_panda_view(lang: str, row: aiosqlite.Row) -> tuple[str, object]:
+def _build_panda_view(lang: str, row: aiosqlite.Row, owner_id: int) -> tuple[str, object]:
+    import main
+
     t = TEXTS[lang]
     now = time.time()
 
@@ -1494,28 +1496,28 @@ def _build_panda_view(lang: str, row: aiosqlite.Row) -> tuple[str, object]:
     text = "\n".join(lines)
 
     builder = InlineKeyboardBuilder()
-    builder.button(text=t["feed_button"], callback_data="panda:feed", style="primary")
+    builder.button(text=t["feed_button"], callback_data=main.owner_cb(owner_id, "panda:feed"), style="primary")
     builder.button(
         text=t["pet_button"],
-        callback_data="panda:pet",
+        callback_data=main.owner_cb(owner_id, "panda:pet"),
         style="primary",
         icon_custom_emoji_id=PET_BUTTON_EMOJI_ID,
     )
     builder.button(
         text=t["level_button"],
-        callback_data="panda:level",
+        callback_data=main.owner_cb(owner_id, "panda:level"),
         style="primary",
         icon_custom_emoji_id=LEVEL_TITLE_EMOJI_ID,
     )
     builder.button(
         text=t["tree_button"],
-        callback_data="panda:tree",
+        callback_data=main.owner_cb(owner_id, "panda:tree"),
         style="primary",
         icon_custom_emoji_id=TREE_CLICK_BUTTON_EMOJI_ID,
     )
     builder.button(
         text=t["setname_button"] if not row["name"] else t["rename_button"],
-        callback_data="panda:setname",
+        callback_data=main.owner_cb(owner_id, "panda:setname"),
         style="primary",
         icon_custom_emoji_id=SETNAME_BUTTON_EMOJI_ID,
     )
@@ -1524,13 +1526,15 @@ def _build_panda_view(lang: str, row: aiosqlite.Row) -> tuple[str, object]:
     return text, builder.as_markup()
 
 
-def _build_level_view(lang: str, row: aiosqlite.Row) -> tuple[str, object]:
+def _build_level_view(lang: str, row: aiosqlite.Row, owner_id: int) -> tuple[str, object]:
     """Экран "Уровень": текущий уровень, по одной шкале прогресса на
     каждый нужный для следующего уровня ресурс (карма/бамбук/роса/орех
     — какие есть в стоимости этого уровня, см. PANDA_LEVEL_COST) и
     кнопка ручного повышения (см. level_up_panda). На максимальном
     (PANDA_LEVEL_MAX) уровне кнопки повышения нет — только
     поздравительная строка."""
+    import main
+
     t = TEXTS[lang]
     level = row["level"]
     bonus_now = round((hunger_duration_multiplier(level) - 1) * 100)
@@ -1567,14 +1571,14 @@ def _build_level_view(lang: str, row: aiosqlite.Row) -> tuple[str, object]:
             lines.pop()
         builder.button(
             text=t["level_up_button"],
-            callback_data="panda:level_up",
+            callback_data=main.owner_cb(owner_id, "panda:level_up"),
             style="primary",
             icon_custom_emoji_id=LEVEL_UP_BUTTON_EMOJI_ID,
         )
 
     builder.button(
         text=t["back_button"],
-        callback_data="panda:level_back",
+        callback_data=main.owner_cb(owner_id, "panda:level_back"),
         style="primary",
         icon_custom_emoji_id=BACK_BUTTON_EMOJI_ID,
     )
@@ -1583,11 +1587,13 @@ def _build_level_view(lang: str, row: aiosqlite.Row) -> tuple[str, object]:
     return "\n".join(lines), builder.as_markup()
 
 
-def _build_tree_view(lang: str, row: aiosqlite.Row) -> tuple[str, object]:
+def _build_tree_view(lang: str, row: aiosqlite.Row, owner_id: int) -> tuple[str, object]:
     """Экран "Дерево чудес" — клик-механика (см. click_wonder_tree):
     показывает текущий запас всех четырёх исходов клика и кнопку
     "Тряхнуть дерево". Экран остаётся на месте после каждого клика —
     меняются только цифры в тексте (см. on_tree_click)."""
+    import main
+
     t = TEXTS[lang]
 
     lines = [
@@ -1604,13 +1610,13 @@ def _build_tree_view(lang: str, row: aiosqlite.Row) -> tuple[str, object]:
     builder = InlineKeyboardBuilder()
     builder.button(
         text=t["tree_click_button"],
-        callback_data="panda:tree_click",
+        callback_data=main.owner_cb(owner_id, "panda:tree_click"),
         style="primary",
         icon_custom_emoji_id=TREE_CLICK_BUTTON_EMOJI_ID,
     )
     builder.button(
         text=t["back_button"],
-        callback_data="panda:tree_back",
+        callback_data=main.owner_cb(owner_id, "panda:tree_back"),
         style="primary",
         icon_custom_emoji_id=BACK_BUTTON_EMOJI_ID,
     )
@@ -1631,7 +1637,7 @@ def _pick_sticker(row: aiosqlite.Row) -> str:
 
 
 def _build_feed_choice(
-    lang: str, fruit_inventory: dict[str, int], pantry_inventory: dict[str, int]
+    lang: str, fruit_inventory: dict[str, int], pantry_inventory: dict[str, int], owner_id: int
 ) -> tuple[str, object]:
     """Экран выбора того, чем покормить панду — фрукты из корзины сада
     (garden.get_inventory / garden.CROPS) и готовая выпечка с витрины
@@ -1640,6 +1646,8 @@ def _build_feed_choice(
     себе больше не кормит напрямую. Чудесный бамбук сюда не входит —
     он тратится не через кормление, а вручную на экране "Уровень"
     (см. panda:level / level_up_panda)."""
+    import main
+
     t = TEXTS[lang]
     text = t["feed_choice_title"]
 
@@ -1655,7 +1663,7 @@ def _build_feed_choice(
                 name=crop["name"][lang],
                 count=count,
             ),
-            callback_data=f"panda:feed_item:crop:{cid}",
+            callback_data=main.owner_cb(owner_id, f"panda:feed_item:crop:{cid}"),
             style="primary",
         )
     for rid in bakery.RECIPE_ORDER:
@@ -1669,12 +1677,12 @@ def _build_feed_choice(
                 name=recipe["name"][lang],
                 count=count,
             ),
-            callback_data=f"panda:feed_item:bakery:{rid}",
+            callback_data=main.owner_cb(owner_id, f"panda:feed_item:bakery:{rid}"),
             style="primary",
         )
     builder.button(
         text=t["back_button"],
-        callback_data="panda:feed_back",
+        callback_data=main.owner_cb(owner_id, "panda:feed_back"),
         style="primary",
         icon_custom_emoji_id=BACK_BUTTON_EMOJI_ID,
     )
@@ -1739,13 +1747,16 @@ def _build_skins_menu(lang: str, owned: set[str], equipped_skin_id: str | None) 
 
 
 def _build_skin_detail(
-    lang: str, skin_id: str, owned: bool, equipped: bool, coin_balance: int, crystal_balance: int
+    lang: str, skin_id: str, owned: bool, equipped: bool, coin_balance: int, crystal_balance: int,
+    owner_id: int,
 ) -> tuple[str, object]:
     """Карточка одного скина: короткая история персонажа и цена/статус,
     плюс кнопка действия (купить / надеть / снять). Баланс игрока (обе
     валюты) показывается в тексте карточки всегда, независимо от того,
     в какой валюте продаётся сам скин, — чтобы было видно, хватает ли
     денег, не выходя из карточки."""
+    import main
+
     t = TEXTS[lang]
     skin = SKINS[skin_id]
 
@@ -1776,20 +1787,20 @@ def _build_skin_detail(
             buy_kwargs["icon_custom_emoji_id"] = buy_emoji_id
         builder.button(
             text=t["buy_button"].format(price=skin["price"]),
-            callback_data=f"panda:skin_buy:{skin_id}",
+            callback_data=main.owner_cb(owner_id, f"panda:skin_buy:{skin_id}"),
             style="primary",
             **buy_kwargs,
         )
     elif equipped:
         builder.button(
             text=t["unequip_button"],
-            callback_data=f"panda:skin_unequip:{skin_id}",
+            callback_data=main.owner_cb(owner_id, f"panda:skin_unequip:{skin_id}"),
             style="primary",
             icon_custom_emoji_id=SKIN_UNEQUIP_EMOJI_ID,
         )
     else:
         builder.button(
-            text=t["wear_button"], callback_data=f"panda:skin_equip:{skin_id}", style="primary"
+            text=t["wear_button"], callback_data=main.owner_cb(owner_id, f"panda:skin_equip:{skin_id}"), style="primary"
         )
     builder.adjust(1)
     return text, builder.as_markup()
@@ -2384,12 +2395,14 @@ async def _unlock_all(user_id: int, lang: str, message: Message, achv_ids: list[
             await message.answer(achives.format_unlock_text(lang, achv_result))
 
 
-def _cancel_keyboard(lang: str):
+def _cancel_keyboard(lang: str, owner_id: int):
     """Кнопка отмены переименования — намеренно без кастомного эмодзи,
     в отличие от остальных кнопок раздела."""
+    import main
+
     t = TEXTS[lang]
     builder = InlineKeyboardBuilder()
-    builder.button(text=t["cancel_button"], callback_data="panda:setname_cancel", style="primary")
+    builder.button(text=t["cancel_button"], callback_data=main.owner_cb(owner_id, "panda:setname_cancel"), style="primary")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -2407,7 +2420,7 @@ async def open_panda(message: Message, state: FSMContext) -> None:
     # его обычные сообщения.
     await state.update_data(panda_menu=None)
     row = await _settle(message.from_user.id)
-    text, markup = _build_panda_view(lang, row)
+    text, markup = _build_panda_view(lang, row, message.from_user.id)
     await message.answer_sticker(_pick_sticker(row))
     await message.answer(text, reply_markup=markup)
 
@@ -2445,7 +2458,7 @@ async def on_feed_panda(callback: CallbackQuery, state: FSMContext) -> None:
         await callback.answer(t["empty_basket_toast"], show_alert=True)
         return
 
-    text, markup = _build_feed_choice(lang, inventory, pantry)
+    text, markup = _build_feed_choice(lang, inventory, pantry, user_id)
     await _safe_edit_text(callback.message, text, reply_markup=markup)
     await callback.answer()
 
@@ -2471,10 +2484,10 @@ async def on_feed_item(callback: CallbackQuery, state: FSMContext) -> None:
         pantry = await bakery.get_pantry(user_id)
         row = None
         if any(count > 0 for count in inventory.values()) or any(count > 0 for count in pantry.values()):
-            text, markup = _build_feed_choice(lang, inventory, pantry)
+            text, markup = _build_feed_choice(lang, inventory, pantry, user_id)
         else:
             row = await _settle(user_id)
-            text, markup = _build_panda_view(lang, row)
+            text, markup = _build_panda_view(lang, row, user_id)
         await _safe_edit_text(callback.message, text, reply_markup=markup)
         return
 
@@ -2492,7 +2505,7 @@ async def on_feed_item(callback: CallbackQuery, state: FSMContext) -> None:
             emoji=item["emoji"], name=item["name"][lang], restore=restore
         )
     )
-    text, markup = _build_panda_view(lang, row)
+    text, markup = _build_panda_view(lang, row, user_id)
     await _safe_edit_text(callback.message, text, reply_markup=markup)
 
     # Ачивки: "Первое кормление" — за сам факт кормления; "Верный друг" —
@@ -2526,7 +2539,7 @@ async def on_feed_item(callback: CallbackQuery, state: FSMContext) -> None:
 async def on_feed_back(callback: CallbackQuery, state: FSMContext) -> None:
     lang = await _get_lang(state, callback.from_user.id)
     row = await _settle(callback.from_user.id)
-    text, markup = _build_panda_view(lang, row)
+    text, markup = _build_panda_view(lang, row, callback.from_user.id)
     await _safe_edit_text(callback.message, text, reply_markup=markup)
     await callback.answer()
 
@@ -2537,7 +2550,7 @@ async def on_open_level(callback: CallbackQuery, state: FSMContext) -> None:
     накопленного чудесного бамбука и кнопка ручного повышения."""
     lang = await _get_lang(state, callback.from_user.id)
     row = await _settle(callback.from_user.id)
-    text, markup = _build_level_view(lang, row)
+    text, markup = _build_level_view(lang, row, callback.from_user.id)
     await _safe_edit_text(callback.message, text, reply_markup=markup)
     await callback.answer()
 
@@ -2575,7 +2588,7 @@ async def on_level_up(callback: CallbackQuery, state: FSMContext) -> None:
         return
 
     await callback.answer(t["level_up_toast"])
-    text, markup = _build_level_view(lang, row)
+    text, markup = _build_level_view(lang, row, callback.from_user.id)
     await _safe_edit_text(callback.message, text, reply_markup=markup)
     bonus = round((hunger_duration_multiplier(row["level"]) - 1) * 100)
     await callback.message.answer(t["level_up_message"].format(level=row["level"], bonus=bonus))
@@ -2585,7 +2598,7 @@ async def on_level_up(callback: CallbackQuery, state: FSMContext) -> None:
 async def on_level_back(callback: CallbackQuery, state: FSMContext) -> None:
     lang = await _get_lang(state, callback.from_user.id)
     row = await _settle(callback.from_user.id)
-    text, markup = _build_panda_view(lang, row)
+    text, markup = _build_panda_view(lang, row, callback.from_user.id)
     await _safe_edit_text(callback.message, text, reply_markup=markup)
     await callback.answer()
 
@@ -2596,7 +2609,7 @@ async def on_open_tree(callback: CallbackQuery, state: FSMContext) -> None:
     кнопка "Тряхнуть дерево" (см. click_wonder_tree)."""
     lang = await _get_lang(state, callback.from_user.id)
     row = await _settle(callback.from_user.id)
-    text, markup = _build_tree_view(lang, row)
+    text, markup = _build_tree_view(lang, row, callback.from_user.id)
     await _safe_edit_text(callback.message, text, reply_markup=markup)
     await callback.answer()
 
@@ -2628,7 +2641,7 @@ async def on_tree_click(callback: CallbackQuery, state: FSMContext) -> None:
         toast = t[f"tree_toast_{result}"]
     await callback.answer(toast)
 
-    text, markup = _build_tree_view(lang, row)
+    text, markup = _build_tree_view(lang, row, callback.from_user.id)
     await _safe_edit_text(callback.message, text, reply_markup=markup)
 
 
@@ -2636,7 +2649,7 @@ async def on_tree_click(callback: CallbackQuery, state: FSMContext) -> None:
 async def on_tree_back(callback: CallbackQuery, state: FSMContext) -> None:
     lang = await _get_lang(state, callback.from_user.id)
     row = await _settle(callback.from_user.id)
-    text, markup = _build_panda_view(lang, row)
+    text, markup = _build_panda_view(lang, row, callback.from_user.id)
     await _safe_edit_text(callback.message, text, reply_markup=markup)
     await callback.answer()
 
@@ -2653,7 +2666,7 @@ async def on_pet_panda(callback: CallbackQuery, state: FSMContext) -> None:
         return
 
     await callback.answer(t["pet_toast"])
-    text, markup = _build_panda_view(lang, row)
+    text, markup = _build_panda_view(lang, row, callback.from_user.id)
     await _safe_edit_text(callback.message, text, reply_markup=markup)
 
     # Ачивка "Верный друг" — глажка тоже может довести настроение/дружбу
@@ -2690,12 +2703,12 @@ async def on_setname_request(callback: CallbackQuery, state: FSMContext) -> None
             t["ask_name_paid"].format(
                 min_len=NAME_MIN_LENGTH, max_len=NAME_MAX_LENGTH, cost=cost, currency=shop.CURRENCY
             ),
-            reply_markup=_cancel_keyboard(lang),
+            reply_markup=_cancel_keyboard(lang, callback.from_user.id),
         )
     else:
         await callback.message.answer(
             t["ask_name_free"].format(min_len=NAME_MIN_LENGTH, max_len=NAME_MAX_LENGTH),
-            reply_markup=_cancel_keyboard(lang),
+            reply_markup=_cancel_keyboard(lang, callback.from_user.id),
         )
 
 
@@ -2712,7 +2725,7 @@ async def on_setname_cancel(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.message.edit_text(t["rename_cancelled"])
 
     row = await _settle(callback.from_user.id)
-    text, markup = _build_panda_view(lang, row)
+    text, markup = _build_panda_view(lang, row, callback.from_user.id)
     await callback.message.answer(text, reply_markup=markup)
 
 
@@ -2733,13 +2746,13 @@ async def on_setname_received(message: Message, state: FSMContext) -> None:
         row = await _settle(message.from_user.id)
         cost = rename_cost(row)
         await message.answer(t["name_insufficient"].format(cost=cost, currency=shop.CURRENCY))
-        text, markup = _build_panda_view(lang, row)
+        text, markup = _build_panda_view(lang, row, message.from_user.id)
         await message.answer_sticker(_pick_sticker(row))
         await message.answer(text, reply_markup=markup)
         return
 
     row = await _settle(message.from_user.id)
-    text, markup = _build_panda_view(lang, row)
+    text, markup = _build_panda_view(lang, row, message.from_user.id)
     await message.answer(t["name_saved"].format(name=html.escape(raw_name)))
     await message.answer_sticker(_pick_sticker(row))
     await message.answer(text, reply_markup=markup)
@@ -2867,7 +2880,9 @@ async def on_skin_selected(
     crystal_balance = await prof.get_crystals(message.from_user.id)
 
     await message.answer_sticker(skin["sticker_id"])
-    text, markup = _build_skin_detail(lang, skin_id, owned, equipped, coin_balance, crystal_balance)
+    text, markup = _build_skin_detail(
+        lang, skin_id, owned, equipped, coin_balance, crystal_balance, message.from_user.id
+    )
     await message.answer(text, reply_markup=markup)
 
 
@@ -2900,7 +2915,7 @@ async def on_buy_skin(callback: CallbackQuery, state: FSMContext) -> None:
     coin_balance = await shop.get_balance(user_id)
     crystal_balance = await prof.get_crystals(user_id)
     text, markup = _build_skin_detail(
-        lang, skin_id, skin_id in owned_skins, equipped, coin_balance, crystal_balance
+        lang, skin_id, skin_id in owned_skins, equipped, coin_balance, crystal_balance, user_id
     )
     await _safe_edit_text(callback.message, text, reply_markup=markup)
 
@@ -2935,7 +2950,7 @@ async def on_equip_skin(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer(t["skin_equipped_toast"])
     coin_balance = await shop.get_balance(user_id)
     crystal_balance = await prof.get_crystals(user_id)
-    text, markup = _build_skin_detail(lang, skin_id, True, True, coin_balance, crystal_balance)
+    text, markup = _build_skin_detail(lang, skin_id, True, True, coin_balance, crystal_balance, user_id)
     await _safe_edit_text(callback.message, text, reply_markup=markup)
 
 
@@ -2953,5 +2968,7 @@ async def on_unequip_skin(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer(t["skin_unequipped_toast"])
     coin_balance = await shop.get_balance(callback.from_user.id)
     crystal_balance = await prof.get_crystals(callback.from_user.id)
-    text, markup = _build_skin_detail(lang, skin_id, True, False, coin_balance, crystal_balance)
+    text, markup = _build_skin_detail(
+        lang, skin_id, True, False, coin_balance, crystal_balance, callback.from_user.id
+    )
     await _safe_edit_text(callback.message, text, reply_markup=markup)
