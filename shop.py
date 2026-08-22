@@ -1028,7 +1028,9 @@ async def _get_lang(state: FSMContext) -> str:
     return data.get("lang", "ru")
 
 
-def _build_cancel_keyboard(lang: str) -> object:
+def _build_cancel_keyboard(lang: str, owner_id: int) -> object:
+    import main
+
     """Клавиатура с одной кнопкой "Отмена" — прикрепляется к сообщениям,
     которые ждут текстовый ввод от игрока (цена/количество своими
     руками, см. ShopStates.waiting_price/waiting_quantity). Даёт выход
@@ -1036,7 +1038,7 @@ def _build_cancel_keyboard(lang: str) -> object:
     on_cancel_input."""
     t = TEXTS[lang]
     builder = InlineKeyboardBuilder()
-    builder.button(text=t["input_cancel_button"], callback_data="shop:cancel_input", style="primary")
+    builder.button(text=t["input_cancel_button"], callback_data=main.owner_cb(owner_id, "shop:cancel_input"), style="primary")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -1046,6 +1048,9 @@ def _build_cancel_keyboard(lang: str) -> object:
 # ==========================
 
 async def _build_market_main(lang: str, user_id: int, balance: int) -> tuple[str, object]:
+    import main
+
+    owner_id = user_id
     t = TEXTS[lang]
     stats = await get_stats(user_id)
     text = "\n".join([
@@ -1063,25 +1068,25 @@ async def _build_market_main(lang: str, user_id: int, balance: int) -> tuple[str
     builder = InlineKeyboardBuilder()
     builder.button(
         text=t["btn_browse"],
-        callback_data="shop:browse:all:0",
+        callback_data=main.owner_cb(owner_id, "shop:browse:all:0"),
         style="primary",
         icon_custom_emoji_id=EMOJI_LOOK_ID,
     )
     builder.button(
         text=t["btn_my_listings"],
-        callback_data="shop:mylistings:0",
+        callback_data=main.owner_cb(owner_id, "shop:mylistings:0"),
         style="primary",
         icon_custom_emoji_id=EMOJI_MYLISTINGS_ID,
     )
     builder.button(
         text=t["btn_sell"],
-        callback_data="shop:sell_choose",
+        callback_data=main.owner_cb(owner_id, "shop:sell_choose"),
         style="primary",
         icon_custom_emoji_id=EMOJI_SELL_ID,
     )
     builder.button(
         text=t["btn_instant"],
-        callback_data="shop:instant_choose",
+        callback_data=main.owner_cb(owner_id, "shop:instant_choose"),
         style="primary",
         icon_custom_emoji_id=EMOJI_METEOR_ID,
     )
@@ -1089,7 +1094,9 @@ async def _build_market_main(lang: str, user_id: int, balance: int) -> tuple[str
     return text, builder.as_markup()
 
 
-async def _build_browse(lang: str, filter_token: str, page: int) -> tuple[str, object]:
+async def _build_browse(lang: str, filter_token: str, page: int, owner_id: int) -> tuple[str, object]:
+    import main
+
     t = TEXTS[lang]
     listings, total = await get_active_listings(filter_token, page)
     pages = max(1, -(-total // PAGE_SIZE))  # округление вверх
@@ -1119,7 +1126,7 @@ async def _build_browse(lang: str, filter_token: str, page: int) -> tuple[str, o
                 text=t["listing_button"].format(
                     emoji=item["emoji"], name=item["name"][lang], count=row["count"], price=row["price"]
                 ),
-                callback_data=f"shop:view:{row['id']}:{filter_token}:{page}",
+                callback_data=main.owner_cb(owner_id, f"shop:view:{row['id']}:{filter_token}:{page}"),
                 style="primary",
                 icon_custom_emoji_id=CURRENCY_EMOJI_ID,
             )
@@ -1133,14 +1140,14 @@ async def _build_browse(lang: str, filter_token: str, page: int) -> tuple[str, o
         if has_prev:
             builder.button(
                 text=t["prev_page_button"],
-                callback_data=f"shop:browse:{filter_token}:{page - 1}",
+                callback_data=main.owner_cb(owner_id, f"shop:browse:{filter_token}:{page - 1}"),
                 style="primary",
                 icon_custom_emoji_id=EMOJI_PREV_PAGE_ID,
             )
         if has_next:
             builder.button(
                 text=t["next_page_button"],
-                callback_data=f"shop:browse:{filter_token}:{page + 1}",
+                callback_data=main.owner_cb(owner_id, f"shop:browse:{filter_token}:{page + 1}"),
                 style="primary",
                 icon_custom_emoji_id=EMOJI_NEXT_PAGE_ID,
             )
@@ -1148,14 +1155,14 @@ async def _build_browse(lang: str, filter_token: str, page: int) -> tuple[str, o
 
     builder.button(
         text=t["filter_button"],
-        callback_data="shop:filter",
+        callback_data=main.owner_cb(owner_id, "shop:filter"),
         style="primary",
         icon_custom_emoji_id=EMOJI_SEARCH_ID,
     )
     sizes.append(1)
     builder.button(
         text=t["back_button"],
-        callback_data="shop:back",
+        callback_data=main.owner_cb(owner_id, "shop:back"),
         style="primary",
         icon_custom_emoji_id=EMOJI_BACK_ID,
     )
@@ -1166,7 +1173,9 @@ async def _build_browse(lang: str, filter_token: str, page: int) -> tuple[str, o
     return text, builder.as_markup()
 
 
-async def _build_listing_detail(lang: str, row: aiosqlite.Row, filter_token: str, page: int) -> tuple[str, object]:
+async def _build_listing_detail(lang: str, row: aiosqlite.Row, filter_token: str, page: int, owner_id: int) -> tuple[str, object]:
+    import main
+
     t = TEXTS[lang]
     item_type = row["item_type"]
     item = _item_meta(item_type, row["crop_id"])
@@ -1188,13 +1197,13 @@ async def _build_listing_detail(lang: str, row: aiosqlite.Row, filter_token: str
     builder = InlineKeyboardBuilder()
     builder.button(
         text=t["buy_button"].format(total=total),
-        callback_data=f"shop:buy:{row['id']}:{filter_token}:{page}",
+        callback_data=main.owner_cb(owner_id, f"shop:buy:{row['id']}:{filter_token}:{page}"),
         style="primary",
         icon_custom_emoji_id=EMOJI_CHECK_ID,
     )
     builder.button(
         text=t["back_button"],
-        callback_data=f"shop:browse:{filter_token}:{page}",
+        callback_data=main.owner_cb(owner_id, f"shop:browse:{filter_token}:{page}"),
         style="primary",
         icon_custom_emoji_id=EMOJI_BACK_ID,
     )
@@ -1202,7 +1211,9 @@ async def _build_listing_detail(lang: str, row: aiosqlite.Row, filter_token: str
     return text, builder.as_markup()
 
 
-def _build_filter_categories(lang: str) -> tuple[str, object]:
+def _build_filter_categories(lang: str, owner_id: int) -> tuple[str, object]:
+    import main
+
     """Первый шаг фильтра — выбор категории (фрукты/выпечка), а не сразу
     общий список всех товаров вперемешку. Список конкретных товаров
     внутри категории — см. _build_filter_items."""
@@ -1212,23 +1223,23 @@ def _build_filter_categories(lang: str) -> tuple[str, object]:
     builder = InlineKeyboardBuilder()
     builder.button(
         text=t["filter_all"],
-        callback_data="shop:browse:all:0",
+        callback_data=main.owner_cb(owner_id, "shop:browse:all:0"),
         style="primary",
         icon_custom_emoji_id=EMOJI_SEARCH_ID,
     )
     builder.button(
         text=t["cat_fruits_button"],
-        callback_data=f"shop:filtercat:{ITEM_CROP}",
+        callback_data=main.owner_cb(owner_id, f"shop:filtercat:{ITEM_CROP}"),
         style="primary",
     )
     builder.button(
         text=t["cat_bakery_button"],
-        callback_data=f"shop:filtercat:{ITEM_BAKERY}",
+        callback_data=main.owner_cb(owner_id, f"shop:filtercat:{ITEM_BAKERY}"),
         style="primary",
     )
     builder.button(
         text=t["back_button"],
-        callback_data="shop:browse:all:0",
+        callback_data=main.owner_cb(owner_id, "shop:browse:all:0"),
         style="primary",
         icon_custom_emoji_id=EMOJI_BACK_ID,
     )
@@ -1236,7 +1247,9 @@ def _build_filter_categories(lang: str) -> tuple[str, object]:
     return text, builder.as_markup()
 
 
-def _build_filter_items(lang: str, item_type: str) -> tuple[str, object]:
+def _build_filter_items(lang: str, item_type: str, owner_id: int) -> tuple[str, object]:
+    import main
+
     """Второй шаг фильтра — конкретный товар внутри уже выбранной
     категории, плюс возможность отфильтровать по всей категории сразу."""
     t = TEXTS[lang]
@@ -1246,7 +1259,7 @@ def _build_filter_items(lang: str, item_type: str) -> tuple[str, object]:
     builder = InlineKeyboardBuilder()
     builder.button(
         text=t["filter_category_all"].format(name=cat_name),
-        callback_data=f"shop:browse:{_encode_filter(item_type, None)}:0",
+        callback_data=main.owner_cb(owner_id, f"shop:browse:{_encode_filter(item_type, None)}:0"),
         style="primary",
         icon_custom_emoji_id=EMOJI_SEARCH_ID,
     )
@@ -1254,12 +1267,12 @@ def _build_filter_items(lang: str, item_type: str) -> tuple[str, object]:
         item = _item_meta(item_type, item_id)
         builder.button(
             text=f"{item['emoji']} {item['name'][lang]}",
-            callback_data=f"shop:browse:{_encode_filter(item_type, item_id)}:0",
+            callback_data=main.owner_cb(owner_id, f"shop:browse:{_encode_filter(item_type, item_id)}:0"),
             style="primary",
         )
     builder.button(
         text=t["back_button"],
-        callback_data="shop:filter",
+        callback_data=main.owner_cb(owner_id, "shop:filter"),
         style="primary",
         icon_custom_emoji_id=EMOJI_BACK_ID,
     )
@@ -1268,6 +1281,9 @@ def _build_filter_items(lang: str, item_type: str) -> tuple[str, object]:
 
 
 async def _build_my_listings(lang: str, user_id: int, page: int) -> tuple[str, object]:
+    import main
+
+    owner_id = user_id
     t = TEXTS[lang]
     listings, total = await get_my_listings(user_id, page)
     pages = max(1, -(-total // PAGE_SIZE))
@@ -1290,7 +1306,7 @@ async def _build_my_listings(lang: str, user_id: int, page: int) -> tuple[str, o
                 text=t["my_listing_button"].format(
                     emoji=item["emoji"], name=item["name"][lang], count=row["count"], price=row["price"]
                 ),
-                callback_data=f"shop:viewmine:{row['id']}:{page}",
+                callback_data=main.owner_cb(owner_id, f"shop:viewmine:{row['id']}:{page}"),
                 style="primary",
                 icon_custom_emoji_id=CURRENCY_EMOJI_ID,
             )
@@ -1304,14 +1320,14 @@ async def _build_my_listings(lang: str, user_id: int, page: int) -> tuple[str, o
         if has_prev:
             builder.button(
                 text=t["prev_page_button"],
-                callback_data=f"shop:mylistings:{page - 1}",
+                callback_data=main.owner_cb(owner_id, f"shop:mylistings:{page - 1}"),
                 style="primary",
                 icon_custom_emoji_id=EMOJI_PREV_PAGE_ID,
             )
         if has_next:
             builder.button(
                 text=t["next_page_button"],
-                callback_data=f"shop:mylistings:{page + 1}",
+                callback_data=main.owner_cb(owner_id, f"shop:mylistings:{page + 1}"),
                 style="primary",
                 icon_custom_emoji_id=EMOJI_NEXT_PAGE_ID,
             )
@@ -1319,7 +1335,7 @@ async def _build_my_listings(lang: str, user_id: int, page: int) -> tuple[str, o
 
     builder.button(
         text=t["back_button"],
-        callback_data="shop:back",
+        callback_data=main.owner_cb(owner_id, "shop:back"),
         style="primary",
         icon_custom_emoji_id=EMOJI_BACK_ID,
     )
@@ -1330,7 +1346,9 @@ async def _build_my_listings(lang: str, user_id: int, page: int) -> tuple[str, o
     return text, builder.as_markup()
 
 
-def _build_my_listing_detail(lang: str, row: aiosqlite.Row, page: int) -> tuple[str, object]:
+def _build_my_listing_detail(lang: str, row: aiosqlite.Row, page: int, owner_id: int) -> tuple[str, object]:
+    import main
+
     t = TEXTS[lang]
     item = _item_meta(row["item_type"], row["crop_id"])
     total = row["count"] * row["price"]
@@ -1346,13 +1364,13 @@ def _build_my_listing_detail(lang: str, row: aiosqlite.Row, page: int) -> tuple[
     builder = InlineKeyboardBuilder()
     builder.button(
         text=t["cancel_button"],
-        callback_data=f"shop:cancel:{row['id']}:{page}",
+        callback_data=main.owner_cb(owner_id, f"shop:cancel:{row['id']}:{page}"),
         style="primary",
         icon_custom_emoji_id=EMOJI_CANCEL_ID,
     )
     builder.button(
         text=t["back_button"],
-        callback_data=f"shop:mylistings:{page}",
+        callback_data=main.owner_cb(owner_id, f"shop:mylistings:{page}"),
         style="primary",
         icon_custom_emoji_id=EMOJI_BACK_ID,
     )
@@ -1360,7 +1378,9 @@ def _build_my_listing_detail(lang: str, row: aiosqlite.Row, page: int) -> tuple[
     return text, builder.as_markup()
 
 
-def _build_category_choice(lang: str, mode: str) -> tuple[str, object]:
+def _build_category_choice(lang: str, mode: str, owner_id: int) -> tuple[str, object]:
+    import main
+
     """Первый шаг продажи/мгновенной продажи — выбор категории товара
     (фрукты сада / выпечка пекарни), только после него — список
     конкретных товаров этой категории (см. _build_item_choice)."""
@@ -1371,17 +1391,17 @@ def _build_category_choice(lang: str, mode: str) -> tuple[str, object]:
     builder = InlineKeyboardBuilder()
     builder.button(
         text=t["cat_fruits_button"],
-        callback_data=f"{prefix}:{ITEM_CROP}",
+        callback_data=main.owner_cb(owner_id, f"{prefix}:{ITEM_CROP}"),
         style="primary",
     )
     builder.button(
         text=t["cat_bakery_button"],
-        callback_data=f"{prefix}:{ITEM_BAKERY}",
+        callback_data=main.owner_cb(owner_id, f"{prefix}:{ITEM_BAKERY}"),
         style="primary",
     )
     builder.button(
         text=t["back_button"],
-        callback_data="shop:back",
+        callback_data=main.owner_cb(owner_id, "shop:back"),
         style="primary",
         icon_custom_emoji_id=EMOJI_BACK_ID,
     )
@@ -1389,7 +1409,9 @@ def _build_category_choice(lang: str, mode: str) -> tuple[str, object]:
     return text, builder.as_markup()
 
 
-def _build_sell_choice(lang: str, item_type: str, inventory: dict[str, int]) -> tuple[str, object]:
+def _build_sell_choice(lang: str, item_type: str, inventory: dict[str, int], owner_id: int) -> tuple[str, object]:
+    import main
+
     t = TEXTS[lang]
     text = t["sell_choose_title"] if item_type == ITEM_CROP else t["sell_choose_title_bakery"]
 
@@ -1401,12 +1423,12 @@ def _build_sell_choice(lang: str, item_type: str, inventory: dict[str, int]) -> 
         item = _item_meta(item_type, item_id)
         builder.button(
             text=t["sell_item_button"].format(emoji=item["emoji"], name=item["name"][lang], count=count),
-            callback_data=f"shop:sell_item:{item_type}:{item_id}",
+            callback_data=main.owner_cb(owner_id, f"shop:sell_item:{item_type}:{item_id}"),
             style="primary",
         )
     builder.button(
         text=t["back_button"],
-        callback_data="shop:sell_choose",
+        callback_data=main.owner_cb(owner_id, "shop:sell_choose"),
         style="primary",
         icon_custom_emoji_id=EMOJI_BACK_ID,
     )
@@ -1414,7 +1436,9 @@ def _build_sell_choice(lang: str, item_type: str, inventory: dict[str, int]) -> 
     return text, builder.as_markup()
 
 
-async def _build_instant_choice(lang: str, item_type: str, inventory: dict[str, int]) -> tuple[str, object]:
+async def _build_instant_choice(lang: str, item_type: str, inventory: dict[str, int], owner_id: int) -> tuple[str, object]:
+    import main
+
     t = TEXTS[lang]
     text = t["instant_choose_title"] if item_type == ITEM_CROP else t["instant_choose_title_bakery"]
 
@@ -1431,13 +1455,13 @@ async def _build_instant_choice(lang: str, item_type: str, inventory: dict[str, 
                 count=count,
                 price=await instant_sell_unit_price(item_type, item_id),
             ),
-            callback_data=f"shop:instant_item:{item_type}:{item_id}",
+            callback_data=main.owner_cb(owner_id, f"shop:instant_item:{item_type}:{item_id}"),
             style="primary",
             icon_custom_emoji_id=CURRENCY_EMOJI_ID,
         )
     builder.button(
         text=t["back_button"],
-        callback_data="shop:instant_choose",
+        callback_data=main.owner_cb(owner_id, "shop:instant_choose"),
         style="primary",
         icon_custom_emoji_id=EMOJI_BACK_ID,
     )
@@ -1445,7 +1469,9 @@ async def _build_instant_choice(lang: str, item_type: str, inventory: dict[str, 
     return text, builder.as_markup()
 
 
-async def _build_qty_choice(lang: str, item_type: str, item_id: str, available: int, mode: str) -> tuple[str, object]:
+async def _build_qty_choice(lang: str, item_type: str, item_id: str, available: int, mode: str, owner_id: int) -> tuple[str, object]:
+    import main
+
     t = TEXTS[lang]
     item = _item_meta(item_type, item_id)
 
@@ -1466,15 +1492,15 @@ async def _build_qty_choice(lang: str, item_type: str, item_id: str, available: 
     builder = InlineKeyboardBuilder()
     for qty in _quantity_options(available):
         label = t["qty_all_button"].format(available=available) if qty == available else t["qty_button"].format(qty=qty)
-        builder.button(text=label, callback_data=f"{prefix}:{item_type}:{item_id}:{qty}", style="primary")
+        builder.button(text=label, callback_data=main.owner_cb(owner_id, f"{prefix}:{item_type}:{item_id}:{qty}"), style="primary")
     builder.button(
         text=t["qty_custom_button"],
-        callback_data=f"shop:customqty:{mode}:{item_type}:{item_id}",
+        callback_data=main.owner_cb(owner_id, f"shop:customqty:{mode}:{item_type}:{item_id}"),
         style="primary",
     )
     builder.button(
         text=t["back_button"],
-        callback_data=back_cb,
+        callback_data=main.owner_cb(owner_id, back_cb),
         style="primary",
         icon_custom_emoji_id=EMOJI_BACK_ID,
     )
@@ -1509,7 +1535,7 @@ async def on_back_to_main(callback: CallbackQuery, state: FSMContext) -> None:
 async def on_browse(callback: CallbackQuery, state: FSMContext) -> None:
     lang = await _get_lang(state)
     _, _, filter_id, page_str = callback.data.split(":")
-    text, markup = await _build_browse(lang, filter_id, int(page_str))
+    text, markup = await _build_browse(lang, filter_id, int(page_str), callback.from_user.id)
     await callback.message.edit_text(text, reply_markup=markup)
     await callback.answer()
 
@@ -1526,11 +1552,11 @@ async def on_view_listing(callback: CallbackQuery, state: FSMContext) -> None:
     row = await get_listing(listing_id)
     if row is None:
         await callback.answer(t["listing_gone_toast"], show_alert=True)
-        text, markup = await _build_browse(lang, filter_id, page)
+        text, markup = await _build_browse(lang, filter_id, page, callback.from_user.id)
         await callback.message.edit_text(text, reply_markup=markup)
         return
 
-    text, markup = await _build_listing_detail(lang, row, filter_id, page)
+    text, markup = await _build_listing_detail(lang, row, filter_id, page, callback.from_user.id)
     await callback.message.edit_text(text, reply_markup=markup)
     await callback.answer()
 
@@ -1538,7 +1564,7 @@ async def on_view_listing(callback: CallbackQuery, state: FSMContext) -> None:
 @router.callback_query(F.data == "shop:filter")
 async def on_filter_menu(callback: CallbackQuery, state: FSMContext) -> None:
     lang = await _get_lang(state)
-    text, markup = _build_filter_categories(lang)
+    text, markup = _build_filter_categories(lang, callback.from_user.id)
     await callback.message.edit_text(text, reply_markup=markup)
     await callback.answer()
 
@@ -1547,7 +1573,7 @@ async def on_filter_menu(callback: CallbackQuery, state: FSMContext) -> None:
 async def on_filter_category_chosen(callback: CallbackQuery, state: FSMContext) -> None:
     lang = await _get_lang(state)
     item_type = callback.data.split(":")[2]
-    text, markup = _build_filter_items(lang, item_type)
+    text, markup = _build_filter_items(lang, item_type, callback.from_user.id)
     await callback.message.edit_text(text, reply_markup=markup)
     await callback.answer()
 
@@ -1619,7 +1645,7 @@ async def on_buy(callback: CallbackQuery, state: FSMContext) -> None:
         except Exception:
             pass
 
-    text, markup = await _build_browse(lang, filter_id, page)
+    text, markup = await _build_browse(lang, filter_id, page, callback.from_user.id)
     await callback.message.edit_text(text, reply_markup=markup)
 
 
@@ -1650,7 +1676,7 @@ async def on_view_my_listing(callback: CallbackQuery, state: FSMContext) -> None
         await callback.message.edit_text(text, reply_markup=markup)
         return
 
-    text, markup = _build_my_listing_detail(lang, row, page)
+    text, markup = _build_my_listing_detail(lang, row, page, callback.from_user.id)
     await callback.message.edit_text(text, reply_markup=markup)
     await callback.answer()
 
@@ -1700,7 +1726,7 @@ async def on_sell_choose(callback: CallbackQuery, state: FSMContext) -> None:
         await callback.answer(t["sell_empty_basket"], show_alert=True)
         return
 
-    text, markup = _build_category_choice(lang, mode="sell")
+    text, markup = _build_category_choice(lang, mode="sell", owner_id=callback.from_user.id)
     await callback.message.edit_text(text, reply_markup=markup)
     await callback.answer()
 
@@ -1716,7 +1742,7 @@ async def on_sell_category_chosen(callback: CallbackQuery, state: FSMContext) ->
         await callback.answer(t["category_empty_toast"], show_alert=True)
         return
 
-    text, markup = _build_sell_choice(lang, item_type, inventory)
+    text, markup = _build_sell_choice(lang, item_type, inventory, callback.from_user.id)
     await callback.message.edit_text(text, reply_markup=markup)
     await callback.answer()
 
@@ -1729,12 +1755,12 @@ async def on_sell_item_chosen(callback: CallbackQuery, state: FSMContext) -> Non
     inventory = await _get_type_inventory(callback.from_user.id, item_type)
     available = inventory.get(item_id, 0)
     if available <= 0:
-        text, markup = _build_sell_choice(lang, item_type, inventory)
+        text, markup = _build_sell_choice(lang, item_type, inventory, callback.from_user.id)
         await callback.message.edit_text(text, reply_markup=markup)
         await callback.answer(TEXTS[lang]["sell_failed_toast"])
         return
 
-    text, markup = await _build_qty_choice(lang, item_type, item_id, available, mode="sell")
+    text, markup = await _build_qty_choice(lang, item_type, item_id, available, mode="sell", owner_id=callback.from_user.id)
     await callback.message.edit_text(text, reply_markup=markup)
     await callback.answer()
 
@@ -1751,7 +1777,7 @@ async def on_sell_qty_chosen(callback: CallbackQuery, state: FSMContext) -> None
     inventory = await _get_type_inventory(callback.from_user.id, item_type)
     if inventory.get(item_id, 0) < qty:
         await callback.answer(t["sell_failed_toast"], show_alert=True)
-        text, markup = _build_sell_choice(lang, item_type, inventory)
+        text, markup = _build_sell_choice(lang, item_type, inventory, callback.from_user.id)
         await callback.message.edit_text(text, reply_markup=markup)
         return
 
@@ -1762,7 +1788,7 @@ async def on_sell_qty_chosen(callback: CallbackQuery, state: FSMContext) -> None
     await callback.answer()
     await callback.message.answer(
         t["ask_price"].format(emoji=item["emoji"], name=item["name"][lang], count=qty, min_price=lo, max_price=hi),
-        reply_markup=_build_cancel_keyboard(lang),
+        reply_markup=_build_cancel_keyboard(lang, callback.from_user.id),
     )
 
 
@@ -1873,9 +1899,9 @@ async def on_custom_qty_request(callback: CallbackQuery, state: FSMContext) -> N
     if available <= 0:
         await callback.answer(t["sell_failed_toast"], show_alert=True)
         if mode == "sell":
-            text, markup = _build_sell_choice(lang, item_type, inventory)
+            text, markup = _build_sell_choice(lang, item_type, inventory, callback.from_user.id)
         else:
-            text, markup = await _build_instant_choice(lang, item_type, inventory)
+            text, markup = await _build_instant_choice(lang, item_type, inventory, callback.from_user.id)
         await callback.message.edit_text(text, reply_markup=markup)
         return
 
@@ -1887,7 +1913,7 @@ async def on_custom_qty_request(callback: CallbackQuery, state: FSMContext) -> N
     await callback.answer()
     await callback.message.answer(
         t["ask_quantity"].format(emoji=item["emoji"], name=item["name"][lang], available=available),
-        reply_markup=_build_cancel_keyboard(lang),
+        reply_markup=_build_cancel_keyboard(lang, callback.from_user.id),
     )
 
 
@@ -1932,7 +1958,7 @@ async def on_quantity_received(message: Message, state: FSMContext) -> None:
         lo, hi = _price_range(item_type, item_id)
         await message.answer(
             t["ask_price"].format(emoji=item["emoji"], name=item["name"][lang], count=qty, min_price=lo, max_price=hi),
-            reply_markup=_build_cancel_keyboard(lang),
+            reply_markup=_build_cancel_keyboard(lang, message.from_user.id),
         )
         return
 
@@ -1964,7 +1990,7 @@ async def on_instant_choose(callback: CallbackQuery, state: FSMContext) -> None:
         await callback.answer(t["instant_empty_basket"], show_alert=True)
         return
 
-    text, markup = _build_category_choice(lang, mode="instant")
+    text, markup = _build_category_choice(lang, mode="instant", owner_id=callback.from_user.id)
     await callback.message.edit_text(text, reply_markup=markup)
     await callback.answer()
 
@@ -1981,7 +2007,7 @@ async def on_instant_category_chosen(callback: CallbackQuery, state: FSMContext)
         await callback.answer(toast, show_alert=True)
         return
 
-    text, markup = await _build_instant_choice(lang, item_type, inventory)
+    text, markup = await _build_instant_choice(lang, item_type, inventory, callback.from_user.id)
     await callback.message.edit_text(text, reply_markup=markup)
     await callback.answer()
 
@@ -1994,12 +2020,12 @@ async def on_instant_item_chosen(callback: CallbackQuery, state: FSMContext) -> 
     inventory = await _get_type_inventory(callback.from_user.id, item_type)
     available = inventory.get(item_id, 0)
     if available <= 0:
-        text, markup = await _build_instant_choice(lang, item_type, inventory)
+        text, markup = await _build_instant_choice(lang, item_type, inventory, callback.from_user.id)
         await callback.message.edit_text(text, reply_markup=markup)
         await callback.answer(TEXTS[lang]["sell_failed_toast"])
         return
 
-    text, markup = await _build_qty_choice(lang, item_type, item_id, available, mode="instant")
+    text, markup = await _build_qty_choice(lang, item_type, item_id, available, mode="instant", owner_id=callback.from_user.id)
     await callback.message.edit_text(text, reply_markup=markup)
     await callback.answer()
 
@@ -2024,7 +2050,7 @@ async def on_instant_qty_chosen(callback: CallbackQuery, state: FSMContext) -> N
 
     inventory = await _get_type_inventory(callback.from_user.id, item_type)
     if any(count > 0 for count in inventory.values()):
-        text, markup = await _build_instant_choice(lang, item_type, inventory)
+        text, markup = await _build_instant_choice(lang, item_type, inventory, callback.from_user.id)
     else:
         balance = await get_balance(callback.from_user.id)
         text, markup = await _build_market_main(lang, callback.from_user.id, balance)
