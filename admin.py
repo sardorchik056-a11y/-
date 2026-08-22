@@ -117,6 +117,7 @@ class AdminStates(StatesGroup):
     section_upload_photo = State()
     link_upload_url = State()
     adlink_title = State()
+    adlink_clicks_value = State()
 
 
 # ==========================
@@ -343,7 +344,8 @@ async def _ensure_adlinks_schema() -> None:
         db = await database.get_db()
         await db.execute(
             "CREATE TABLE IF NOT EXISTS ad_links ("
-            "slug TEXT PRIMARY KEY, title TEXT NOT NULL, created_at REAL NOT NULL)"
+            "slug TEXT PRIMARY KEY, title TEXT NOT NULL, created_at REAL NOT NULL, "
+            "clicks_adjustment INTEGER NOT NULL DEFAULT 0)"
         )
         await db.execute(
             "CREATE TABLE IF NOT EXISTS ad_link_visits ("
@@ -355,6 +357,17 @@ async def _ensure_adlinks_schema() -> None:
         await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_ad_link_visits_slug ON ad_link_visits(slug)"
         )
+        # Миграция для БД, созданных до появления clicks_adjustment —
+        # CREATE TABLE IF NOT EXISTS выше её не добавит в уже
+        # существующую таблицу. Если колонка уже есть (новая БД или
+        # повторный запуск после миграции) — SQLite бросит
+        # OperationalError "duplicate column name", он тут ожидаем.
+        try:
+            await db.execute(
+                "ALTER TABLE ad_links ADD COLUMN clicks_adjustment INTEGER NOT NULL DEFAULT 0"
+            )
+        except aiosqlite.OperationalError:
+            pass
         await database.commit()
         _adlinks_schema_ready = True
 
@@ -440,29 +453,72 @@ async def get_ad_link(slug: str) -> aiosqlite.Row | None:
 
 
 async def get_ad_link_stats(slug: str) -> dict:
-    """{'clicks': сколько новых игроков перешло по ссылке, 'joined':
-    сколько из них реально прошли онбординг (язык + пол)}."""
+    """{'clicks': сколько новых игроков перешло по ссылке (с учётом
+    ручной поправки, см. set_ad_link_clicks), 'joined': сколько из них
+    реально прошли онбординг (язык + пол)}."""
     await _ensure_adlinks_schema()
     db = await database.get_db()
     async with db.execute(
-        "SELECT COUNT(*) AS clicks, COALESCE(SUM(joined), 0) AS joined "
-        "FROM ad_link_visits WHERE slug = ?",
+        "SELECT COUNT(v.user_id) AS real_clicks, COALESCE(SUM(v.joined), 0) AS joined, "
+        "COALESCE(l.clicks_adjustment, 0) AS adjustment "
+        "FROM ad_links l LEFT JOIN ad_link_visits v ON v.slug = l.slug "
+        "WHERE l.slug = ? GROUP BY l.slug",
         (slug,),
     ) as cursor:
         row = await cursor.fetchone()
-    return {"clicks": row["clicks"], "joined": row["joined"]}
+    if row is None:
+        return {"clicks": 0, "joined": 0}
+    clicks = max(0, row["real_clicks"] + row["adjustment"])
+    return {"clicks": clicks, "joined": row["joined"]}
 
 
 async def get_all_ad_link_stats() -> dict[str, dict]:
     """{slug: {'clicks':.., 'joined':..}} одним запросом — для списка
-    ссылок в админке, чтобы не дёргать БД по разу на каждую строку."""
+    ссылок в админке, чтобы не дёргать БД по разу на каждую строку.
+    'clicks' уже учитывает ручную поправку (см. set_ad_link_clicks)."""
     await _ensure_adlinks_schema()
     db = await database.get_db()
     async with db.execute(
-        "SELECT slug, COUNT(*) AS clicks, COALESCE(SUM(joined), 0) AS joined "
-        "FROM ad_link_visits GROUP BY slug"
+        "SELECT l.slug AS slug, COUNT(v.user_id) AS real_clicks, "
+        "COALESCE(SUM(v.joined), 0) AS joined, COALESCE(l.clicks_adjustment, 0) AS adjustment "
+        "FROM ad_links l LEFT JOIN ad_link_visits v ON v.slug = l.slug "
+        "GROUP BY l.slug"
     ) as cursor:
-        return {row["slug"]: {"clicks": row["clicks"], "joined": row["joined"]} async for row in cursor}
+        return {
+            row["slug"]: {
+                "clicks": max(0, row["real_clicks"] + row["adjustment"]),
+                "joined": row["joined"],
+            }
+            async for row in cursor
+        }
+
+
+async def set_ad_link_clicks(slug: str, target_clicks: int) -> int:
+    """Вручную задаёт количество переходов, которое будет показываться
+    в статистике ссылки. Реальные переходы (ad_link_visits) при этом не
+    трогаются — вместо этого сохраняется поправка (target_clicks минус
+    фактическое число строк в ad_link_visits для этого slug), которую
+    get_ad_link_stats/get_all_ad_link_stats прибавляют к реальному
+    счётчику. Так новые настоящие переходы по ссылке по-прежнему
+    увеличивают итоговое число ровно на 1, отталкиваясь от значения,
+    заданного админом, а не сбрасывают его.
+
+    Возвращает итоговое отображаемое количество переходов (совпадает с
+    target_clicks, если тот не отрицательный)."""
+    await _ensure_adlinks_schema()
+    target_clicks = max(0, target_clicks)
+    db = await database.get_db()
+    async with db.execute(
+        "SELECT COUNT(*) AS real_clicks FROM ad_link_visits WHERE slug = ?", (slug,)
+    ) as cursor:
+        row = await cursor.fetchone()
+    real_clicks = row["real_clicks"] if row else 0
+    adjustment = target_clicks - real_clicks
+    await db.execute(
+        "UPDATE ad_links SET clicks_adjustment = ? WHERE slug = ?", (adjustment, slug)
+    )
+    await database.commit()
+    return target_clicks
 
 
 async def delete_ad_link(slug: str) -> None:
@@ -821,6 +877,13 @@ TEXT_ADLINK_DETAIL = (
 )
 TEXT_ADLINK_DELETE_CONFIRM = "🗑 Удалить ссылку «{title}» и всю её статистику? Это необратимо."
 TEXT_ADLINK_DELETED = "🗑 Ссылка «{title}» удалена."
+TEXT_ADLINK_ASK_CLICKS = (
+    "✏️ <i>Сейчас переходов по ссылке «{title}»: <b>{clicks}</b>.\n"
+    "Отправьте новое число переходов (целое, 0 или больше).</i>\n"
+    "<i>Для отмены — /cancel</i>"
+)
+TEXT_ADLINK_CLICKS_INVALID = "⚠️ <i>Введите целое число 0 или больше.</i>"
+TEXT_ADLINK_CLICKS_SET = "✅ Количество переходов по ссылке «{title}» изменено на <b>{clicks}</b>."
 
 
 # ==========================
@@ -997,6 +1060,11 @@ def _build_adlinks_list_kb(links: list[aiosqlite.Row], stats: dict[str, dict]) -
 
 def _build_adlink_detail_kb(slug: str) -> object:
     builder = InlineKeyboardBuilder()
+    builder.button(
+        text="✏️ Изменить количество переходов",
+        callback_data=f"admin:adlink_edit_clicks:{slug}",
+        style="primary",
+    )
     builder.button(
         text="🗑 Удалить ссылку", callback_data=f"admin:adlink_delete:{slug}", style="primary"
     )
@@ -2023,6 +2091,62 @@ async def on_adlink_delete_ask(callback: CallbackQuery, state: FSMContext) -> No
         reply_markup=_build_adlink_delete_confirm_kb(slug),
     )
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin:adlink_edit_clicks:"))
+async def on_adlink_edit_clicks_start(callback: CallbackQuery, state: FSMContext) -> None:
+    slug = callback.data.split(":", 2)[2]
+    link = await get_ad_link(slug)
+    if link is None:
+        await callback.answer()
+        return
+
+    stats = await get_ad_link_stats(slug)
+    await state.update_data(adlink_slug=slug)
+    await state.set_state(AdminStates.adlink_clicks_value)
+    await callback.message.edit_text(
+        TEXT_ADLINK_ASK_CLICKS.format(title=html.escape(link["title"]), clicks=stats["clicks"])
+    )
+    await callback.answer()
+
+
+@router.message(StateFilter(AdminStates.adlink_clicks_value))
+async def on_adlink_edit_clicks_value(message: Message, state: FSMContext, bot: Bot) -> None:
+    raw = (message.text or "").strip()
+    try:
+        target_clicks = int(raw)
+    except ValueError:
+        await message.answer(TEXT_ADLINK_CLICKS_INVALID)
+        return
+    if target_clicks < 0:
+        await message.answer(TEXT_ADLINK_CLICKS_INVALID)
+        return
+
+    data = await state.get_data()
+    slug = data.get("adlink_slug")
+    link = await get_ad_link(slug) if slug else None
+    if link is None:
+        await state.set_state(None)
+        await message.answer(TEXT_ADLINKS_LIST_TITLE)
+        return
+
+    new_clicks = await set_ad_link_clicks(slug, target_clicks)
+    await state.set_state(None)
+
+    await message.answer(TEXT_ADLINK_CLICKS_SET.format(title=html.escape(link["title"]), clicks=new_clicks))
+
+    url = await build_ad_link_url(bot, slug)
+    stats = await get_ad_link_stats(slug)
+    rate = round(stats["joined"] / stats["clicks"] * 100) if stats["clicks"] else 0
+    text = TEXT_ADLINK_DETAIL.format(
+        title=html.escape(link["title"]),
+        url=url,
+        clicks=stats["clicks"],
+        joined=stats["joined"],
+        rate=rate,
+        created=_fmt_dt(link["created_at"]),
+    )
+    await message.answer(text, reply_markup=_build_adlink_detail_kb(slug))
 
 
 @router.callback_query(F.data.startswith("admin:adlink:"))
