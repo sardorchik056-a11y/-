@@ -57,7 +57,7 @@ import html
 
 import aiosqlite
 from aiogram import BaseMiddleware, F, Router
-from aiogram.enums import MessageEntityType
+from aiogram.enums import ChatType, MessageEntityType
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
@@ -361,6 +361,11 @@ SETTINGS_TEXTS = {
         "news_button": "Новости",
         "chat_button": "Наш чат",
         "lang_changed": "✅ <b>Язык изменён на {name}</b>",
+        "lang_changed_group_notice": (
+            "✅ <b>Язык изменён на {name}</b>\n\n"
+            "<i>Напишите мне в личные сообщения, чтобы увидеть обновлённое "
+            "меню — в группе оно не показывается.</i>"
+        ),
         "name_prompt": (
             f"{CE_EDIT_NAME} <b>Новое имя для профиля</b>\n\n"
             "<i>Отправьте текст — до {limit} символов, в одну строку. "
@@ -385,6 +390,11 @@ SETTINGS_TEXTS = {
         "news_button": "News",
         "chat_button": "Our chat",
         "lang_changed": "✅ <b>Language changed to {name}</b>",
+        "lang_changed_group_notice": (
+            "✅ <b>Language changed to {name}</b>\n\n"
+            "<i>Message me in a private chat to see the updated menu — "
+            "it doesn't show up in groups.</i>"
+        ),
         "name_prompt": (
             f"{CE_EDIT_NAME} <b>New profile name</b>\n\n"
             "<i>Send a text message — up to {limit} characters, single line. "
@@ -2232,10 +2242,21 @@ async def change_language(callback: CallbackQuery, state: FSMContext) -> None:
     # делает `import prof` наверху).
     import main
 
-    await callback.message.answer(
-        SETTINGS_TEXTS[new_lang]["lang_changed"].format(name=SETTINGS_LANGUAGES[new_lang]),
-        reply_markup=main.main_menu_keyboard(new_lang),
-    )
+    # Реплай-клавиатура главного меню — часть личного меню бота (см.
+    # GroupMenuGuardMiddleware в main.py) и не должна светиться в группах:
+    # там, где эта настройка вообще могла быть открыта (инлайн-профиль,
+    # запощенный/переслатый в группу), отправляем просто подтверждение
+    # смены языка и просьбу написать в личку — без reply_markup, чтобы не
+    # выводить реплай-клавиатуру в группу.
+    if callback.message.chat.type == ChatType.PRIVATE:
+        await callback.message.answer(
+            SETTINGS_TEXTS[new_lang]["lang_changed"].format(name=SETTINGS_LANGUAGES[new_lang]),
+            reply_markup=main.main_menu_keyboard(new_lang),
+        )
+    else:
+        await callback.message.answer(
+            SETTINGS_TEXTS[new_lang]["lang_changed_group_notice"].format(name=SETTINGS_LANGUAGES[new_lang]),
+        )
 
     await callback.answer()
 
