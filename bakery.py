@@ -1783,7 +1783,13 @@ def _build_bakery_view(
     page: int,
     unlocked_extra: set[int],
     levels: dict[int, int],
+    owner_id: int,
 ) -> tuple[str, object]:
+    # Локальный импорт main — см. owner_cb/OwnerGuardMiddleware в main.py;
+    # main.py сам импортирует bakery.py, поэтому импорт на уровне модуля
+    # дал бы цикл (тот же приём, что и с `import admin` в _render_and_send).
+    import main
+
     t = TEXTS[lang]
     now = time.time()
 
@@ -1810,7 +1816,7 @@ def _build_bakery_view(
             lines.append("")
             builder.button(
                 text=t["unlock_oven_button"].format(cost=OVEN_UNLOCK_COST[oven_index]),
-                callback_data=f"bakery:unlock:{oven_index}",
+                callback_data=main.owner_cb(owner_id, f"bakery:unlock:{oven_index}"),
                 style="primary",
                 icon_custom_emoji_id=OVEN_LOCK_EMOJI_ID,
             )
@@ -1831,14 +1837,14 @@ def _build_bakery_view(
                 lines.append("")
             builder.button(
                 text=t["oven_empty_button"],
-                callback_data=f"bakery:choose:{oven_index}",
+                callback_data=main.owner_cb(owner_id, f"bakery:choose:{oven_index}"),
                 style="primary",
                 icon_custom_emoji_id=BAKE_BUTTON_EMOJI_ID,
             )
             if can_upgrade:
                 builder.button(
                     text=t["upgrade_oven_button"].format(cost=OVEN_UPGRADE_COST[level + 1]),
-                    callback_data=f"bakery:upgrade:{oven_index}",
+                    callback_data=main.owner_cb(owner_id, f"bakery:upgrade:{oven_index}"),
                     style="primary",
                     icon_custom_emoji_id=OVEN_UPGRADE_EMOJI_ID,
                 )
@@ -1867,13 +1873,13 @@ def _build_bakery_view(
             )
         builder.button(
             text=t["oven_button_baking"].format(emoji=recipe["emoji"], percent=percent),
-            callback_data=f"bakery:info:{oven_index}",
+            callback_data=main.owner_cb(owner_id, f"bakery:info:{oven_index}"),
             style="primary",
         )
         if can_upgrade:
             builder.button(
                 text=t["upgrade_oven_button"].format(cost=OVEN_UPGRADE_COST[level + 1]),
-                callback_data=f"bakery:upgrade:{oven_index}",
+                callback_data=main.owner_cb(owner_id, f"bakery:upgrade:{oven_index}"),
                 style="primary",
                 icon_custom_emoji_id=OVEN_UPGRADE_EMOJI_ID,
             )
@@ -1888,7 +1894,7 @@ def _build_bakery_view(
     if page > 0:
         builder.button(
             text=t["page_prev_button"],
-            callback_data=f"bakery:ovenpage:{page - 1}",
+            callback_data=main.owner_cb(owner_id, f"bakery:ovenpage:{page - 1}"),
             style="primary",
             icon_custom_emoji_id=PAGE_PREV_EMOJI_ID,
         )
@@ -1896,7 +1902,7 @@ def _build_bakery_view(
     if page < total_pages - 1:
         builder.button(
             text=t["page_next_button"],
-            callback_data=f"bakery:ovenpage:{page + 1}",
+            callback_data=main.owner_cb(owner_id, f"bakery:ovenpage:{page + 1}"),
             style="primary",
             icon_custom_emoji_id=PAGE_NEXT_EMOJI_ID,
         )
@@ -1920,7 +1926,7 @@ def _build_bakery_view(
 
     builder.button(
         text=t["shop_button"],
-        callback_data="bakery:shop",
+        callback_data=main.owner_cb(owner_id, "bakery:shop"),
         style="primary",
         icon_custom_emoji_id=SHOP_BUTTON_EMOJI_ID,
     )
@@ -1929,7 +1935,9 @@ def _build_bakery_view(
     return text, builder.as_markup()
 
 
-def _build_recipe_choice(lang: str, oven_index: int, level: int, page: int = 0) -> tuple[str, object]:
+def _build_recipe_choice(lang: str, oven_index: int, level: int, owner_id: int, page: int = 0) -> tuple[str, object]:
+    import main
+
     t = TEXTS[lang]
 
     total_pages = (len(RECIPE_ORDER) + RECIPES_PER_PAGE - 1) // RECIPES_PER_PAGE
@@ -1959,7 +1967,7 @@ def _build_recipe_choice(lang: str, oven_index: int, level: int, page: int = 0) 
 
         builder.button(
             text=t["recipe_button"].format(emoji=recipe["emoji"], name=recipe["name"][lang]),
-            callback_data=f"bakery:bake:{oven_index}:{recipe_id}",
+            callback_data=main.owner_cb(owner_id, f"bakery:bake:{oven_index}:{recipe_id}"),
             style="primary",
         )
         row_sizes.append(1)
@@ -1969,7 +1977,7 @@ def _build_recipe_choice(lang: str, oven_index: int, level: int, page: int = 0) 
     if page > 0:
         builder.button(
             text=t["page_prev_button"],
-            callback_data=f"bakery:recipepage:{oven_index}:{page - 1}",
+            callback_data=main.owner_cb(owner_id, f"bakery:recipepage:{oven_index}:{page - 1}"),
             style="primary",
             icon_custom_emoji_id=PAGE_PREV_EMOJI_ID,
         )
@@ -1977,7 +1985,7 @@ def _build_recipe_choice(lang: str, oven_index: int, level: int, page: int = 0) 
     if page < total_pages - 1:
         builder.button(
             text=t["page_next_button"],
-            callback_data=f"bakery:recipepage:{oven_index}:{page + 1}",
+            callback_data=main.owner_cb(owner_id, f"bakery:recipepage:{oven_index}:{page + 1}"),
             style="primary",
             icon_custom_emoji_id=PAGE_NEXT_EMOJI_ID,
         )
@@ -1987,7 +1995,7 @@ def _build_recipe_choice(lang: str, oven_index: int, level: int, page: int = 0) 
 
     builder.button(
         text=t["back_button"],
-        callback_data=f"bakery:back:{oven_index // OVENS_PER_PAGE}",
+        callback_data=main.owner_cb(owner_id, f"bakery:back:{oven_index // OVENS_PER_PAGE}"),
         style="primary",
         icon_custom_emoji_id=BACK_BUTTON_EMOJI_ID,
     )
@@ -1999,7 +2007,9 @@ def _build_recipe_choice(lang: str, oven_index: int, level: int, page: int = 0) 
     return text, builder.as_markup()
 
 
-def _build_shop_view(lang: str, balance: int, ingredients_inv: dict[str, int]) -> tuple[str, object]:
+def _build_shop_view(lang: str, balance: int, ingredients_inv: dict[str, int], owner_id: int) -> tuple[str, object]:
+    import main
+
     t = TEXTS[lang]
     lines = [t["shop_title"], t["separator"], t["shop_balance_line"].format(balance=balance), ""]
     lines.append(t["shop_hint"])
@@ -2018,14 +2028,14 @@ def _build_shop_view(lang: str, balance: int, ingredients_inv: dict[str, int]) -
         )
         builder.button(
             text=t["buy_button"].format(emoji=ing["emoji"], name=ing["name"][lang], price=ing["price"]),
-            callback_data=f"bakery:ingredient:{ing_id}",
+            callback_data=main.owner_cb(owner_id, f"bakery:ingredient:{ing_id}"),
             style="primary",
             icon_custom_emoji_id=COIN_BUTTON_EMOJI_ID,
         )
 
     builder.button(
         text=t["back_button"],
-        callback_data="bakery:back:0",
+        callback_data=main.owner_cb(owner_id, "bakery:back:0"),
         style="primary",
         icon_custom_emoji_id=BACK_BUTTON_EMOJI_ID,
     )
@@ -2038,7 +2048,9 @@ def _quantity_options() -> list[int]:
     return list(QUICK_QUANTITIES)
 
 
-def _build_qty_choice(lang: str, ingredient_id: str) -> tuple[str, object]:
+def _build_qty_choice(lang: str, ingredient_id: str, owner_id: int) -> tuple[str, object]:
+    import main
+
     t = TEXTS[lang]
     ing = INGREDIENTS[ingredient_id]
     text = t["choose_qty_title"].format(emoji=ing["emoji"], name=ing["name"][lang], price=ing["price"])
@@ -2047,19 +2059,19 @@ def _build_qty_choice(lang: str, ingredient_id: str) -> tuple[str, object]:
     for qty in _quantity_options():
         builder.button(
             text=t["qty_button"].format(qty=qty, total=qty * ing["price"]),
-            callback_data=f"bakery:buyqty:{ingredient_id}:{qty}",
+            callback_data=main.owner_cb(owner_id, f"bakery:buyqty:{ingredient_id}:{qty}"),
             style="primary",
             icon_custom_emoji_id=COIN_BUTTON_EMOJI_ID,
         )
     builder.button(
         text=t["qty_custom_button"],
-        callback_data=f"bakery:buycustom:{ingredient_id}",
+        callback_data=main.owner_cb(owner_id, f"bakery:buycustom:{ingredient_id}"),
         style="primary",
         icon_custom_emoji_id=QTY_CUSTOM_BUTTON_EMOJI_ID,
     )
     builder.button(
         text=t["back_button"],
-        callback_data="bakery:shop",
+        callback_data=main.owner_cb(owner_id, "bakery:shop"),
         style="primary",
         icon_custom_emoji_id=BACK_BUTTON_EMOJI_ID,
     )
@@ -2091,7 +2103,7 @@ async def _render_and_send(message_or_callback, lang: str, edit: bool = False, p
     pantry = await get_pantry(user_id)
     unlocked_extra = await _get_unlocked_extra_ovens(user_id)
     levels = await _get_oven_levels(user_id)
-    text, markup = _build_bakery_view(lang, ovens, pantry, page, unlocked_extra, levels)
+    text, markup = _build_bakery_view(lang, ovens, pantry, page, unlocked_extra, levels, user_id)
 
     # Картинка раздела (см. admin.py: admin:sections, ключ "bakery") —
     # если задана, экран пекарни отправляется/правится как фото с
@@ -2116,7 +2128,7 @@ async def _render_and_send(message_or_callback, lang: str, edit: bool = False, p
 async def _render_shop_and_send(callback: CallbackQuery, lang: str) -> None:
     balance = await shop.get_balance(callback.from_user.id)
     ingredients_inv = await get_ingredients(callback.from_user.id)
-    text, markup = _build_shop_view(lang, balance, ingredients_inv)
+    text, markup = _build_shop_view(lang, balance, ingredients_inv, callback.from_user.id)
 
     import admin
 
@@ -2214,7 +2226,7 @@ async def on_choose_recipe(callback: CallbackQuery, state: FSMContext) -> None:
         return
 
     level = await _get_single_oven_level(callback.from_user.id, oven_index)
-    text, markup = _build_recipe_choice(lang, oven_index, level, page=0)
+    text, markup = _build_recipe_choice(lang, oven_index, level, callback.from_user.id, page=0)
 
     import admin
 
@@ -2230,7 +2242,7 @@ async def on_recipe_page(callback: CallbackQuery, state: FSMContext) -> None:
     page = int(page_str)
 
     level = await _get_single_oven_level(callback.from_user.id, oven_index)
-    text, markup = _build_recipe_choice(lang, oven_index, level, page=page)
+    text, markup = _build_recipe_choice(lang, oven_index, level, callback.from_user.id, page=page)
 
     import admin
 
@@ -2341,7 +2353,7 @@ async def on_ingredient_chosen(callback: CallbackQuery, state: FSMContext) -> No
     lang = await _get_lang(state, callback.from_user.id)
     ingredient_id = callback.data.split(":")[2]
 
-    text, markup = _build_qty_choice(lang, ingredient_id)
+    text, markup = _build_qty_choice(lang, ingredient_id, callback.from_user.id)
 
     import admin
 
@@ -2471,6 +2483,6 @@ async def on_custom_qty_received(message: Message, state: FSMContext) -> None:
 
     balance = await shop.get_balance(message.from_user.id)
     ingredients_inv = await get_ingredients(message.from_user.id)
-    text, markup = _build_shop_view(lang, balance, ingredients_inv)
+    text, markup = _build_shop_view(lang, balance, ingredients_inv, message.from_user.id)
     await message.answer(text, reply_markup=markup)
     await _notify_achievements(message.answer, message.from_user.id, lang, achv_ids)
