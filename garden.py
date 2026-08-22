@@ -1284,7 +1284,13 @@ def _build_garden_view(
     page: int,
     unlocked_extra: set[int],
     levels: dict[int, int],
+    owner_id: int,
 ) -> tuple[str, object]:
+    # Локальный импорт main — см. owner_cb/OwnerGuardMiddleware в main.py;
+    # main.py сам импортирует garden.py, поэтому импорт на уровне модуля
+    # дал бы цикл (тот же приём, что и с `import admin` в _render_and_send).
+    import main
+
     t = TEXTS[lang]
     now = time.time()
 
@@ -1312,7 +1318,7 @@ def _build_garden_view(
             lines.append("")
             builder.button(
                 text=t["unlock_button"].format(cost=PLOT_UNLOCK_COST[plot_index]),
-                callback_data=f"garden:unlock:{plot_index}",
+                callback_data=main.owner_cb(owner_id, f"garden:unlock:{plot_index}"),
                 style="primary",
                 icon_custom_emoji_id=PLOT_LOCK_EMOJI_ID,
             )
@@ -1335,13 +1341,13 @@ def _build_garden_view(
                 lines.append("")
             builder.button(
                 text=t["plant_button"],
-                callback_data=f"garden:choose:{plot_index}",
+                callback_data=main.owner_cb(owner_id, f"garden:choose:{plot_index}"),
                 style="primary",
             )
             if can_upgrade:
                 builder.button(
                     text=t["upgrade_button"].format(cost=PLOT_UPGRADE_COST[level + 1]),
-                    callback_data=f"garden:upgrade:{plot_index}",
+                    callback_data=main.owner_cb(owner_id, f"garden:upgrade:{plot_index}"),
                     style="primary",
                     icon_custom_emoji_id=PLOT_UPGRADE_EMOJI_ID,
                 )
@@ -1372,13 +1378,13 @@ def _build_garden_view(
             )
         builder.button(
             text=t["plot_button_growing"].format(emoji=crop["emoji"], percent=percent),
-            callback_data=f"garden:info:{plot_index}",
+            callback_data=main.owner_cb(owner_id, f"garden:info:{plot_index}"),
             style="primary",
         )
         if can_upgrade:
             builder.button(
                 text=t["upgrade_button"].format(cost=PLOT_UPGRADE_COST[level + 1]),
-                callback_data=f"garden:upgrade:{plot_index}",
+                callback_data=main.owner_cb(owner_id, f"garden:upgrade:{plot_index}"),
                 style="primary",
                 icon_custom_emoji_id=PLOT_UPGRADE_EMOJI_ID,
             )
@@ -1394,7 +1400,7 @@ def _build_garden_view(
     if page > 0:
         builder.button(
             text=t["page_prev_button"],
-            callback_data=f"garden:page:{page - 1}",
+            callback_data=main.owner_cb(owner_id, f"garden:page:{page - 1}"),
             style="primary",
             icon_custom_emoji_id=PAGE_PREV_EMOJI_ID,
         )
@@ -1402,7 +1408,7 @@ def _build_garden_view(
     if page < total_pages - 1:
         builder.button(
             text=t["page_next_button"],
-            callback_data=f"garden:page:{page + 1}",
+            callback_data=main.owner_cb(owner_id, f"garden:page:{page + 1}"),
             style="primary",
             icon_custom_emoji_id=PAGE_NEXT_EMOJI_ID,
         )
@@ -1427,7 +1433,9 @@ def _build_garden_view(
     return text, builder.as_markup()
 
 
-def _build_crop_choice(lang: str, plot_index: int, level: int) -> tuple[str, object]:
+def _build_crop_choice(lang: str, plot_index: int, level: int, owner_id: int) -> tuple[str, object]:
+    import main
+
     t = TEXTS[lang]
     text = t["choose_crop_title"]
 
@@ -1448,10 +1456,10 @@ def _build_crop_choice(lang: str, plot_index: int, level: int) -> tuple[str, obj
                 # время ДО посадки, а не базовое время культуры.
                 time=_format_duration(_effective_grow_seconds(cid, level), lang),
             ),
-            callback_data=f"garden:plant:{plot_index}:{cid}",
+            callback_data=main.owner_cb(owner_id, f"garden:plant:{plot_index}:{cid}"),
             style="primary",
         )
-    builder.button(text=t["back_button"], callback_data=f"garden:back:{origin_page}", style="primary")
+    builder.button(text=t["back_button"], callback_data=main.owner_cb(owner_id, f"garden:back:{origin_page}"), style="primary")
     builder.adjust(1)
     return text, builder.as_markup()
 
@@ -1484,7 +1492,7 @@ async def _render_and_send(message_or_callback, lang: str, edit: bool = False, p
     inventory = await get_inventory(user_id)
     unlocked_extra = await _get_unlocked_extra_plots(user_id)
     levels = await _get_plot_levels(user_id)
-    text, markup = _build_garden_view(lang, plots, inventory, page, unlocked_extra, levels)
+    text, markup = _build_garden_view(lang, plots, inventory, page, unlocked_extra, levels, user_id)
 
     # Картинка раздела (см. admin.py: admin:sections, ключ "garden") —
     # если задана, экран сада отправляется/правится как фото с текстом
@@ -1542,7 +1550,7 @@ async def on_choose_crop(callback: CallbackQuery, state: FSMContext) -> None:
         return
 
     level = await _get_single_plot_level(callback.from_user.id, plot_index)
-    text, markup = _build_crop_choice(lang, plot_index, level)
+    text, markup = _build_crop_choice(lang, plot_index, level, callback.from_user.id)
 
     import admin
 
