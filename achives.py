@@ -1746,7 +1746,12 @@ def _achv_page_text(
 _BACK_TO_CATEGORIES_TEXT = {"ru": "К разделам", "en": "To categories"}
 
 
-def _categories_keyboard(lang: str, unlocked: set[str]) -> InlineKeyboardMarkup:
+def _categories_keyboard(lang: str, unlocked: set[str], owner_id: int) -> InlineKeyboardMarkup:
+    # Локальный импорт main — см. owner_cb/OwnerGuardMiddleware в main.py;
+    # main.py сам импортирует achives.py, поэтому импорт на уровне модуля
+    # дал бы цикл (тот же приём, что и с `import admin` ниже).
+    import main
+
     kb = InlineKeyboardBuilder()
     for cat_id in CATEGORY_ORDER:
         achv_ids = _achievements_in_category(cat_id)
@@ -1758,7 +1763,7 @@ def _categories_keyboard(lang: str, unlocked: set[str]) -> InlineKeyboardMarkup:
             # без глифа в тексте (тег <tg-emoji> в кнопках не рендерится).
             kb.button(
                 text=f"{title} {done}/{len(achv_ids)}",
-                callback_data=f"ach:cat:{cat_id}",
+                callback_data=main.owner_cb(owner_id, f"ach:cat:{cat_id}"),
                 icon_custom_emoji_id=emoji_id,
             )
         else:
@@ -1767,32 +1772,34 @@ def _categories_keyboard(lang: str, unlocked: set[str]) -> InlineKeyboardMarkup:
             glyph = CATEGORY_FALLBACK_EMOJI[cat_id]
             kb.button(
                 text=f"{glyph} {title} {done}/{len(achv_ids)}",
-                callback_data=f"ach:cat:{cat_id}",
+                callback_data=main.owner_cb(owner_id, f"ach:cat:{cat_id}"),
             )
     # По две кнопки в ряд, последняя (5-я) — отдельным рядом одна.
     kb.adjust(2, 2, 1)
     return kb.as_markup()
 
 
-def _pager_keyboard(lang: str, cat_id: str, idx: int, total: int) -> InlineKeyboardMarkup:
+def _pager_keyboard(lang: str, cat_id: str, idx: int, total: int, owner_id: int) -> InlineKeyboardMarkup:
+    import main
+
     prev_idx = max(0, idx - 1)
     next_idx = min(total - 1, idx + 1)
 
     kb = InlineKeyboardBuilder()
     kb.button(
         text=" ",
-        callback_data=f"ach:catpage:{cat_id}:{prev_idx}",
+        callback_data=main.owner_cb(owner_id, f"ach:catpage:{cat_id}:{prev_idx}"),
         icon_custom_emoji_id=PAGE_PREV_EMOJI_ID,
     )
-    kb.button(text=f"{idx + 1}/{total}", callback_data="ach:noop")
+    kb.button(text=f"{idx + 1}/{total}", callback_data=main.owner_cb(owner_id, "ach:noop"))
     kb.button(
         text=" ",
-        callback_data=f"ach:catpage:{cat_id}:{next_idx}",
+        callback_data=main.owner_cb(owner_id, f"ach:catpage:{cat_id}:{next_idx}"),
         icon_custom_emoji_id=PAGE_NEXT_EMOJI_ID,
     )
     kb.button(
         text=_BACK_TO_CATEGORIES_TEXT[lang],
-        callback_data="ach:cats",
+        callback_data=main.owner_cb(owner_id, "ach:cats"),
         icon_custom_emoji_id=BACK_TO_CATEGORIES_EMOJI_ID,
     )
     kb.adjust(3, 1)
@@ -1830,7 +1837,7 @@ async def _render_categories(user_id: int, lang: str) -> tuple[str, InlineKeyboa
     unlocked = await get_unlocked(user_id)
     total_unlocks = await get_total_unlocks_count()
     text = _categories_text(lang, unlocked, total_unlocks)
-    keyboard = _categories_keyboard(lang, unlocked)
+    keyboard = _categories_keyboard(lang, unlocked, user_id)
     return text, keyboard
 
 
@@ -1846,7 +1853,7 @@ async def _render_category_page(
     progress = await _get_progress(achv_id, user_id)
 
     text = _achv_page_text(lang, achv_id, unlocked_map, completions, progress)
-    keyboard = _pager_keyboard(lang, cat_id, idx, len(achv_ids))
+    keyboard = _pager_keyboard(lang, cat_id, idx, len(achv_ids), user_id)
     return text, keyboard
 
 
