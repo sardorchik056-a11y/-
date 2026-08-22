@@ -767,24 +767,26 @@ async def _edit_prompt_by_ids(bot, chat_id: int, message_id: int, text: str, rep
     return False
 
 
-def _donate_menu_keyboard(lang: str):
+def _donate_menu_keyboard(lang: str, owner_id: int):
+    import main
+
     t = TEXTS[lang]
     builder = InlineKeyboardBuilder()
     builder.button(
         text=t["crystals_button"],
-        callback_data="donate:crystals",
+        callback_data=main.owner_cb(owner_id, "donate:crystals"),
         style="primary",
         icon_custom_emoji_id=CRYSTAL_EMOJI_ID,
     )
     builder.button(
         text=t["coins_button"],
-        callback_data="donate:coins",
+        callback_data=main.owner_cb(owner_id, "donate:coins"),
         style="primary",
         icon_custom_emoji_id=COIN_EMOJI_ID,
     )
     builder.button(
         text=t["privileges_button"],
-        callback_data="donate:privileges",
+        callback_data=main.owner_cb(owner_id, "donate:privileges"),
         style="primary",
         icon_custom_emoji_id=PRIVILEGES_EMOJI_ID,
     )
@@ -792,12 +794,14 @@ def _donate_menu_keyboard(lang: str):
     return builder.as_markup()
 
 
-def _back_keyboard(lang: str):
+def _back_keyboard(lang: str, owner_id: int):
+    import main
+
     t = TEXTS[lang]
     builder = InlineKeyboardBuilder()
     builder.button(
         text=t["back_button"],
-        callback_data="donate:back",
+        callback_data=main.owner_cb(owner_id, "donate:back"),
         style="primary",
         icon_custom_emoji_id=BACK_EMOJI_ID,
     )
@@ -805,19 +809,21 @@ def _back_keyboard(lang: str):
     return builder.as_markup()
 
 
-def _privileges_menu_keyboard(lang: str):
+def _privileges_menu_keyboard(lang: str, owner_id: int):
+    import main
+
     t = TEXTS[lang]
     builder = InlineKeyboardBuilder()
     for tier in PRIVILEGE_TIERS:
         builder.button(
             text=t["priv_tier_button"].format(name=tier["name"], price=tier["price"]),
-            callback_data=f"donate:priv:{tier['id']}",
+            callback_data=main.owner_cb(owner_id, f"donate:priv:{tier['id']}"),
             style="primary",
             icon_custom_emoji_id=CRYSTAL_EMOJI_ID,
         )
     builder.button(
         text=t["back_button"],
-        callback_data="donate:back",
+        callback_data=main.owner_cb(owner_id, "donate:back"),
         style="primary",
         icon_custom_emoji_id=BACK_EMOJI_ID,
     )
@@ -825,18 +831,20 @@ def _privileges_menu_keyboard(lang: str):
     return builder.as_markup()
 
 
-def _privilege_detail_keyboard(lang: str, tier_id: str):
+def _privilege_detail_keyboard(lang: str, tier_id: str, owner_id: int):
+    import main
+
     t = TEXTS[lang]
     builder = InlineKeyboardBuilder()
     builder.button(
         text=t["priv_buy_button"],
-        callback_data=f"donate:priv_buy:{tier_id}",
+        callback_data=main.owner_cb(owner_id, f"donate:priv_buy:{tier_id}"),
         style="success",
         icon_custom_emoji_id=CRYSTAL_EMOJI_ID,
     )
     builder.button(
         text=t["back_button"],
-        callback_data="donate:privileges",
+        callback_data=main.owner_cb(owner_id, "donate:privileges"),
         style="primary",
         icon_custom_emoji_id=BACK_EMOJI_ID,
     )
@@ -844,18 +852,20 @@ def _privilege_detail_keyboard(lang: str, tier_id: str):
     return builder.as_markup()
 
 
-def _privilege_insufficient_keyboard(lang: str, tier_id: str):
+def _privilege_insufficient_keyboard(lang: str, tier_id: str, owner_id: int):
+    import main
+
     t = TEXTS[lang]
     builder = InlineKeyboardBuilder()
     builder.button(
         text=t["priv_topup_button"],
-        callback_data="donate:crystals",
+        callback_data=main.owner_cb(owner_id, "donate:crystals"),
         style="success",
         icon_custom_emoji_id=CRYSTAL_EMOJI_ID,
     )
     builder.button(
         text=t["back_button"],
-        callback_data=f"donate:priv:{tier_id}",
+        callback_data=main.owner_cb(owner_id, f"donate:priv:{tier_id}"),
         style="primary",
         icon_custom_emoji_id=BACK_EMOJI_ID,
     )
@@ -879,7 +889,9 @@ def _method_icon_id(method: str) -> str:
     }[method]
 
 
-def _method_keyboard(lang: str, kind: str):
+def _method_keyboard(lang: str, kind: str, owner_id: int):
+    import main
+
     """Экран выбора способа оплаты — показывается после выбора категории
     ("Кристаллы"/"Монеты"), до списка пакетов. Способы без вписанного
     токена (см. crypto_pay.py) не показываются вообще (_method_available)."""
@@ -890,13 +902,13 @@ def _method_keyboard(lang: str, kind: str):
             continue
         builder.button(
             text=_method_button_text(t, method),
-            callback_data=f"donate:method:{kind}:{method}",
+            callback_data=main.owner_cb(owner_id, f"donate:method:{kind}:{method}"),
             style="primary",
             icon_custom_emoji_id=_method_icon_id(method),
         )
     builder.button(
         text=t["back_button"],
-        callback_data="donate:back",
+        callback_data=main.owner_cb(owner_id, "donate:back"),
         style="primary",
         icon_custom_emoji_id=BACK_EMOJI_ID,
     )
@@ -904,7 +916,9 @@ def _method_keyboard(lang: str, kind: str):
     return builder.as_markup()
 
 
-def _crystals_keyboard(lang: str, method: str):
+def _crystals_keyboard(lang: str, method: str, owner_id: int):
+    import main
+
     t = TEXTS[lang]
     builder = InlineKeyboardBuilder()
     for idx, crystals in enumerate(CRYSTAL_PACKAGES):
@@ -916,19 +930,19 @@ def _crystals_keyboard(lang: str, method: str):
             )
         builder.button(
             text=text,
-            callback_data=f"donate:buy:{method}:{idx}",
+            callback_data=main.owner_cb(owner_id, f"donate:buy:{method}:{idx}"),
             style="primary",
             icon_custom_emoji_id=CRYSTAL_EMOJI_ID,
         )
     builder.button(
         text=t["custom_button"],
-        callback_data=f"donate:custom:{method}",
+        callback_data=main.owner_cb(owner_id, f"donate:custom:{method}"),
         style="primary",
         icon_custom_emoji_id=CUSTOM_AMOUNT_EMOJI_ID,
     )
     builder.button(
         text=t["back_button"],
-        callback_data="donate:crystals",
+        callback_data=main.owner_cb(owner_id, "donate:crystals"),
         style="primary",
         icon_custom_emoji_id=BACK_EMOJI_ID,
     )
@@ -936,7 +950,9 @@ def _crystals_keyboard(lang: str, method: str):
     return builder.as_markup()
 
 
-def _coins_keyboard(lang: str, method: str):
+def _coins_keyboard(lang: str, method: str, owner_id: int):
+    import main
+
     t = TEXTS[lang]
     builder = InlineKeyboardBuilder()
     for idx, coins in enumerate(COIN_PACKAGES):
@@ -948,19 +964,19 @@ def _coins_keyboard(lang: str, method: str):
             )
         builder.button(
             text=text,
-            callback_data=f"donate:buycoin:{method}:{idx}",
+            callback_data=main.owner_cb(owner_id, f"donate:buycoin:{method}:{idx}"),
             style="primary",
             icon_custom_emoji_id=COIN_EMOJI_ID,
         )
     builder.button(
         text=t["custom_button"],
-        callback_data=f"donate:customcoin:{method}",
+        callback_data=main.owner_cb(owner_id, f"donate:customcoin:{method}"),
         style="primary",
         icon_custom_emoji_id=CUSTOM_AMOUNT_EMOJI_ID,
     )
     builder.button(
         text=t["back_button"],
-        callback_data="donate:coins",
+        callback_data=main.owner_cb(owner_id, "donate:coins"),
         style="primary",
         icon_custom_emoji_id=BACK_EMOJI_ID,
     )
@@ -968,12 +984,14 @@ def _coins_keyboard(lang: str, method: str):
     return builder.as_markup()
 
 
-def _cancel_keyboard(lang: str, method: str):
+def _cancel_keyboard(lang: str, method: str, owner_id: int):
+    import main
+
     t = TEXTS[lang]
     builder = InlineKeyboardBuilder()
     builder.button(
         text=t["cancel_button"],
-        callback_data=f"donate:custom_cancel:{method}",
+        callback_data=main.owner_cb(owner_id, f"donate:custom_cancel:{method}"),
         style="primary",
         icon_custom_emoji_id=CANCEL_EMOJI_ID,
     )
@@ -981,12 +999,14 @@ def _cancel_keyboard(lang: str, method: str):
     return builder.as_markup()
 
 
-def _cancel_coins_keyboard(lang: str, method: str):
+def _cancel_coins_keyboard(lang: str, method: str, owner_id: int):
+    import main
+
     t = TEXTS[lang]
     builder = InlineKeyboardBuilder()
     builder.button(
         text=t["cancel_button"],
-        callback_data=f"donate:customcoin_cancel:{method}",
+        callback_data=main.owner_cb(owner_id, f"donate:customcoin_cancel:{method}"),
         style="primary",
         icon_custom_emoji_id=CANCEL_EMOJI_ID,
     )
@@ -994,7 +1014,9 @@ def _cancel_coins_keyboard(lang: str, method: str):
     return builder.as_markup()
 
 
-def _crypto_pay_keyboard(lang: str, pay_url: str, usd: float, row_id: int, back_callback: str):
+def _crypto_pay_keyboard(lang: str, pay_url: str, usd: float, row_id: int, back_callback: str, owner_id: int):
+    import main
+
     """Клавиатура экрана оплаты через CryptoBot/xRocket: ссылка на оплату,
     кнопка ручной проверки платежа (row_id — id строки в crypto_invoices)
     и "Назад" — к списку пакетов этого способа оплаты."""
@@ -1008,13 +1030,13 @@ def _crypto_pay_keyboard(lang: str, pay_url: str, usd: float, row_id: int, back_
     )
     builder.button(
         text=t["check_payment_button"],
-        callback_data=f"donate:checkpay:{row_id}",
+        callback_data=main.owner_cb(owner_id, f"donate:checkpay:{row_id}"),
         style="primary",
         icon_custom_emoji_id=CRYPTO_CHECK_BUTTON_EMOJI_ID,
     )
     builder.button(
         text=t["back_button"],
-        callback_data=back_callback,
+        callback_data=main.owner_cb(owner_id, back_callback),
         style="primary",
         icon_custom_emoji_id=BACK_EMOJI_ID,
     )
@@ -1022,7 +1044,9 @@ def _crypto_pay_keyboard(lang: str, pay_url: str, usd: float, row_id: int, back_
     return builder.as_markup()
 
 
-def _pay_keyboard(lang: str, link: str, stars: int, back_callback: str = "donate:crystals", icon_emoji_id: str = CRYSTAL_EMOJI_ID):
+def _pay_keyboard(lang: str, link: str, stars: int, owner_id: int, back_callback: str = "donate:crystals", icon_emoji_id: str = CRYSTAL_EMOJI_ID):
+    import main
+
     """Кнопка-ссылка на оплату (Telegram Stars, см. _create_crystal_invoice_link) —
     зелёная (style="success"), чтобы визуально выделяться как основное
     действие на экране; кнопка-ссылка "Мои звёзды" (tg://stars/ — открывает
@@ -1050,7 +1074,7 @@ def _pay_keyboard(lang: str, link: str, stars: int, back_callback: str = "donate
     )
     builder.button(
         text=t["back_button"],
-        callback_data=back_callback,
+        callback_data=main.owner_cb(owner_id, back_callback),
         style="primary",
         icon_custom_emoji_id=BACK_EMOJI_ID,
     )
@@ -1232,7 +1256,7 @@ async def open_donate_menu(message: Message, state: FSMContext) -> None:
     # сам импортирует donate.py на верхнем уровне (цикл).
     import admin
 
-    await admin.send_with_section_image(message, "donate", text, reply_markup=_donate_menu_keyboard(lang))
+    await admin.send_with_section_image(message, "donate", text, reply_markup=_donate_menu_keyboard(lang, message.from_user.id))
 
 
 @router.callback_query(F.data == "donate:back")
@@ -1240,7 +1264,7 @@ async def on_donate_back(callback: CallbackQuery, state: FSMContext) -> None:
     lang = await _get_lang(state, callback.from_user.id)
     text = await _donate_intro_text(lang, callback.from_user.id)
     await callback.answer()
-    await _safe_edit_text(callback.message, text, reply_markup=_donate_menu_keyboard(lang))
+    await _safe_edit_text(callback.message, text, reply_markup=_donate_menu_keyboard(lang, callback.from_user.id))
 
 
 @router.callback_query(F.data == "donate:privileges")
@@ -1248,7 +1272,7 @@ async def on_privileges(callback: CallbackQuery, state: FSMContext) -> None:
     lang = await _get_lang(state, callback.from_user.id)
     text = await _privileges_intro_text(lang, callback.from_user.id)
     await callback.answer()
-    await _safe_edit_text(callback.message, text, reply_markup=_privileges_menu_keyboard(lang))
+    await _safe_edit_text(callback.message, text, reply_markup=_privileges_menu_keyboard(lang, callback.from_user.id))
 
 
 @router.callback_query(F.data.startswith("donate:priv:"))
@@ -1262,7 +1286,7 @@ async def on_privilege_detail(callback: CallbackQuery, state: FSMContext) -> Non
     text = await _privilege_detail_text(lang, tier_id, callback.from_user.id)
     await callback.answer()
     await _safe_edit_text(
-        callback.message, text, reply_markup=_privilege_detail_keyboard(lang, tier_id)
+        callback.message, text, reply_markup=_privilege_detail_keyboard(lang, tier_id, callback.from_user.id)
     )
 
 
@@ -1285,7 +1309,7 @@ async def on_privilege_buy(callback: CallbackQuery, state: FSMContext) -> None:
         await _safe_edit_text(
             callback.message,
             t["priv_insufficient"].format(price=tier["price"], balance=balance),
-            reply_markup=_privilege_insufficient_keyboard(lang, tier_id),
+            reply_markup=_privilege_insufficient_keyboard(lang, tier_id, user_id),
         )
         return
 
@@ -1301,7 +1325,7 @@ async def on_privilege_buy(callback: CallbackQuery, state: FSMContext) -> None:
             until=_format_date(active["expires_at"], lang),
             skin_note=skin_note,
         ).strip(),
-        reply_markup=_back_keyboard(lang),
+        reply_markup=_back_keyboard(lang, user_id),
     )
 
 
@@ -1310,7 +1334,9 @@ async def on_crystals(callback: CallbackQuery, state: FSMContext) -> None:
     lang = await _get_lang(state, callback.from_user.id)
     t = TEXTS[lang]
     await callback.answer()
-    await _safe_edit_text(callback.message, t["choose_method_crystals"], reply_markup=_method_keyboard(lang, "crystals"))
+    await _safe_edit_text(
+        callback.message, t["choose_method_crystals"], reply_markup=_method_keyboard(lang, "crystals", callback.from_user.id)
+    )
 
 
 @router.callback_query(F.data == "donate:coins")
@@ -1318,7 +1344,9 @@ async def on_coins(callback: CallbackQuery, state: FSMContext) -> None:
     lang = await _get_lang(state, callback.from_user.id)
     t = TEXTS[lang]
     await callback.answer()
-    await _safe_edit_text(callback.message, t["choose_method_coins"], reply_markup=_method_keyboard(lang, "coins"))
+    await _safe_edit_text(
+        callback.message, t["choose_method_coins"], reply_markup=_method_keyboard(lang, "coins", callback.from_user.id)
+    )
 
 
 @router.callback_query(F.data.startswith("donate:method:"))
@@ -1344,11 +1372,11 @@ async def on_method_selected(callback: CallbackQuery, state: FSMContext) -> None
     usd_suffix = "" if method == "stars" else "_usd"
     if kind == "crystals":
         await _safe_edit_text(
-            callback.message, t[f"crystals_text{usd_suffix}"], reply_markup=_crystals_keyboard(lang, method)
+            callback.message, t[f"crystals_text{usd_suffix}"], reply_markup=_crystals_keyboard(lang, method, callback.from_user.id)
         )
     else:
         await _safe_edit_text(
-            callback.message, t[f"coins_text{usd_suffix}"], reply_markup=_coins_keyboard(lang, method)
+            callback.message, t[f"coins_text{usd_suffix}"], reply_markup=_coins_keyboard(lang, method, callback.from_user.id)
         )
 
 
@@ -1371,12 +1399,12 @@ async def _build_pay_screen(
         if kind == "crystals":
             link = await _create_crystal_invoice_link(bot, lang, amount)
             text = t["pay_prompt"].format(amount=amount, stars=stars)
-            markup = _pay_keyboard(lang, link, stars, back_callback="donate:method:crystals:stars")
+            markup = _pay_keyboard(lang, link, stars, user_id, back_callback="donate:method:crystals:stars")
         else:
             link = await _create_coin_invoice_link(bot, lang, amount)
             text = t["pay_prompt_coins"].format(amount=amount, stars=stars)
             markup = _pay_keyboard(
-                lang, link, stars, back_callback="donate:method:coins:stars", icon_emoji_id=COIN_EMOJI_ID
+                lang, link, stars, user_id, back_callback="donate:method:coins:stars", icon_emoji_id=COIN_EMOJI_ID
             )
         return text, markup
 
@@ -1396,7 +1424,14 @@ async def _build_pay_screen(
     if invoice is None:
         logger.warning("Failed to create %s invoice for user %s (%s %s)", method, user_id, kind, amount)
         builder = InlineKeyboardBuilder()
-        builder.button(text=t["back_button"], callback_data=back_callback, style="primary", icon_custom_emoji_id=BACK_EMOJI_ID)
+        import main
+
+        builder.button(
+            text=t["back_button"],
+            callback_data=main.owner_cb(user_id, back_callback),
+            style="primary",
+            icon_custom_emoji_id=BACK_EMOJI_ID,
+        )
         builder.adjust(1)
         return t["crypto_error"], builder.as_markup()
 
@@ -1413,7 +1448,7 @@ async def _build_pay_screen(
 
     text_key = "pay_prompt_crypto_crystals" if kind == "crystals" else "pay_prompt_crypto_coins"
     text = t[text_key].format(amount=amount, usd=f"{usd:.2f}", provider=provider_label)
-    markup = _crypto_pay_keyboard(lang, invoice["pay_url"], usd, row_id, back_callback)
+    markup = _crypto_pay_keyboard(lang, invoice["pay_url"], usd, row_id, back_callback, user_id)
     return text, markup
 
 
@@ -1489,7 +1524,7 @@ async def on_custom_request(callback: CallbackQuery, state: FSMContext) -> None:
     await _safe_edit_text(
         callback.message,
         t[ask_key].format(min=CUSTOM_MIN, max=CUSTOM_MAX),
-        reply_markup=_cancel_keyboard(lang, method),
+        reply_markup=_cancel_keyboard(lang, method, callback.from_user.id),
     )
     await state.update_data(
         donate_prompt_chat_id=callback.message.chat.id,
@@ -1508,7 +1543,7 @@ async def on_custom_cancel(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     usd_suffix = "" if method == "stars" else "_usd"
     await _safe_edit_text(
-        callback.message, t[f"crystals_text{usd_suffix}"], reply_markup=_crystals_keyboard(lang, method)
+        callback.message, t[f"crystals_text{usd_suffix}"], reply_markup=_crystals_keyboard(lang, method, callback.from_user.id)
     )
 
 
@@ -1562,7 +1597,7 @@ async def on_custom_coin_request(callback: CallbackQuery, state: FSMContext) -> 
     await _safe_edit_text(
         callback.message,
         t[ask_key].format(min=CUSTOM_COINS_MIN, max=CUSTOM_COINS_MAX, step=COIN_MULTIPLIER),
-        reply_markup=_cancel_coins_keyboard(lang, method),
+        reply_markup=_cancel_coins_keyboard(lang, method, callback.from_user.id),
     )
     await state.update_data(
         donate_prompt_chat_id=callback.message.chat.id,
@@ -1581,7 +1616,7 @@ async def on_custom_coin_cancel(callback: CallbackQuery, state: FSMContext) -> N
     await callback.answer()
     usd_suffix = "" if method == "stars" else "_usd"
     await _safe_edit_text(
-        callback.message, t[f"coins_text{usd_suffix}"], reply_markup=_coins_keyboard(lang, method)
+        callback.message, t[f"coins_text{usd_suffix}"], reply_markup=_coins_keyboard(lang, method, callback.from_user.id)
     )
 
 
@@ -1658,7 +1693,7 @@ async def _finalize_purchase(bot, chat_id: int, user_id: int, kind: str, amount:
         text = t["payment_success"].format(amount=amount, balance=balance)
     else:
         text = t["payment_success_coins"].format(amount=amount, balance=balance)
-    await bot.send_message(chat_id, text, reply_markup=_donate_menu_keyboard(lang))
+    await bot.send_message(chat_id, text, reply_markup=_donate_menu_keyboard(lang, user_id))
 
     achv_result = await achives.unlock(user_id, "first_donate")
     if achv_result:
